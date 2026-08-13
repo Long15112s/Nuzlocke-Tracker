@@ -10,7 +10,7 @@ export const GAME_POKEDEX_LIMITS = { "Pokémon Platin": 493 } as const;
 export const GERMAN_POKEMON_NAMES = Object.fromEntries(platinumPokemon.map((pokemon) => [pokemon.apiName, pokemon.displayName])) as Record<string, string>;
 const pokemonByApiName = new Map(platinumPokemon.map((pokemon) => [pokemon.apiName, pokemon]));
 
-function getSpriteUrlFromId(id?: number) {
+export function getPokemonSpriteUrl(id?: number) {
   if (!id) return undefined;
   return `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`;
 }
@@ -66,7 +66,7 @@ export async function getPokemonList(): Promise<PokemonApiSummary[]> {
     englishName: pokemon.englishName,
     displayName: pokemon.displayName,
     url: `https://pokeapi.co/api/v2/pokemon/${pokemon.id}/`,
-    spriteUrl: getSpriteUrlFromId(pokemon.id),
+    spriteUrl: getPokemonSpriteUrl(pokemon.id),
   } satisfies PokemonApiSummary));
 
   if (typeof window !== "undefined" && list.length > 0) {
@@ -96,7 +96,7 @@ export async function searchPokemon(query: string, sourceList?: PokemonApiSummar
     .map((pokemon) => ({
       ...pokemon,
       displayName: pokemon.displayName ?? GERMAN_POKEMON_NAMES[pokemon.name],
-      spriteUrl: pokemon.spriteUrl ?? getSpriteUrlFromId(pokemon.id),
+      spriteUrl: pokemon.spriteUrl ?? getPokemonSpriteUrl(pokemon.id),
     }));
 }
 
@@ -133,7 +133,7 @@ export async function getPokemonDetails(name: string): Promise<PokemonSelection 
     name: payload.name,
     apiName: payload.name,
     displayName: germanName ?? GERMAN_POKEMON_NAMES[payload.name] ?? toDisplayName(payload.name),
-    spriteUrl: payload.sprites?.front_default ?? getSpriteUrlFromId(payload.id),
+    spriteUrl: payload.sprites?.front_default ?? getPokemonSpriteUrl(payload.id),
     types: (payload.types ?? []).map((entry) => entry.type?.name ?? "").filter(Boolean),
     abilities: (payload.abilities ?? []).map((entry) => entry.ability?.name ?? "").filter(Boolean),
   };
