@@ -28,6 +28,21 @@ test("SQL serializes joins and authorizes writes through active membership", () 
   assert.match(slotsSql, /update public\.run_members set active = false/i);
 });
 
+test("member recovery is hashed, single-use and preserves the logical player", () => {
+  const sql = readFileSync("supabase/migrations/player-recovery-codes.sql", "utf8");
+  const cloud = readFileSync("lib/cloud.ts", "utf8");
+  assert.match(sql, /gen_random_bytes\(16\)/i);
+  assert.match(sql, /digest\(raw_code, 'sha256'\)/i);
+  assert.match(sql, /for update/i);
+  assert.match(sql, /recovery_code_hash = null, inactive_reason = 'recovered'/i);
+  assert.match(sql, /old_member\.player_id/i);
+  assert.match(sql, /old_member\.role = 'host'[\s\S]*auth\.uid\(\)/i);
+  assert.match(sql, /unique index if not exists run_members_one_active_player/i);
+  assert.match(sql, /inactive_reason='kicked'|inactive_reason = 'kicked'/i);
+  assert.match(sql, /inactive_reason='left'|inactive_reason = 'left'/i);
+  assert.doesNotMatch(cloud, /(?:localStorage[\s\S]*recovery|console\.log\([\s\S]*recovery)/i);
+});
+
 test("delete RPC is host-scoped, idempotent and relies on run-local cascades", () => {
   const deleteSql = readFileSync("supabase/migrations/fix-delete-run.sql", "utf8");
   const schemaSql = readFileSync("supabase/schema.sql", "utf8");

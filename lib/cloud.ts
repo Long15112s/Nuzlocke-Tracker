@@ -4,7 +4,8 @@ import type { RunMemberRole, RunState } from "./types";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { isAlreadyDeletedError } from "./cloudErrors";
 
-export type CloudMembership = { runId: string; userId: string; playerId: string | null; displayName: string; role: RunMemberRole; active: boolean };
+export type CloudMembership = { runId: string; userId: string; playerId: string | null; displayName: string; role: RunMemberRole; active: boolean; inactiveReason?: "kicked" | "left" | "recovered" | null; recoveryConfigured?: boolean };
+export type RecoveryResult = { run: RunState; recoveryCode: string };
 
 async function ensureAnonymousUser() {
   const supabase = getSupabase();
@@ -26,10 +27,38 @@ export async function getCloudMembership(runId: string): Promise<CloudMembership
   const supabase = getSupabase();
   if (!supabase) return null;
   const user = await ensureAnonymousUser();
-  const { data, error } = await supabase.from("run_members").select("run_id,user_id,player_id,display_name,role,active").eq("run_id", runId).eq("user_id", user.id).maybeSingle();
+  const { data, error } = await supabase.from("run_members").select("run_id,user_id,player_id,display_name,role,active,inactive_reason,recovery_code_created_at").eq("run_id", runId).eq("user_id", user.id).maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  return { runId: data.run_id, userId: data.user_id, playerId: data.player_id, displayName: data.display_name, role: data.role as RunMemberRole, active: data.active };
+  return { runId: data.run_id, userId: data.user_id, playerId: data.player_id, displayName: data.display_name, role: data.role as RunMemberRole, active: data.active, inactiveReason: data.inactive_reason, recoveryConfigured: Boolean(data.recovery_code_created_at) };
+}
+
+export async function issueRecoveryCode(runId: string) {
+  const supabase = getSupabase(); if (!supabase) throw new Error("Supabase ist nicht konfiguriert.");
+  await ensureAnonymousUser();
+  const { data, error } = await supabase.rpc("issue_member_recovery_code", { target_run: runId });
+  if (error) throw error;
+  return String(data);
+}
+
+export async function rotateRecoveryCode(runId: string) {
+  const supabase = getSupabase(); if (!supabase) throw new Error("Supabase ist nicht konfiguriert.");
+  await ensureAnonymousUser();
+  const { data, error } = await supabase.rpc("rotate_member_recovery_code", { target_run: runId });
+  if (error) throw error;
+  return String(data);
+}
+
+export async function recoverCloudMember(runCode: string, recoveryCode: string): Promise<RecoveryResult> {
+  const supabase = getSupabase(); if (!supabase) throw new Error("Supabase ist nicht konfiguriert.");
+  await ensureAnonymousUser();
+  const { data, error } = await supabase.rpc("recover_run_member", { code: runCode.trim().toUpperCase(), recovery_code: recoveryCode });
+  if (error) throw new Error(error.message.includes("already connected") ? "Dieser Browser ist bereits mit einem Spieler dieses Runs verbunden." : "Run oder Wiederherstellungscode ist ungültig.");
+  const result = Array.isArray(data) ? data[0] : data;
+  if (!result?.run_id || !result?.new_recovery_code) throw new Error("Run oder Wiederherstellungscode ist ungültig.");
+  const run = await loadCloudRun(result.run_id);
+  if (!run) throw new Error("Run oder Wiederherstellungscode ist ungültig.");
+  return { run, recoveryCode: result.new_recovery_code };
 }
 
 export type RunPreview = { id: string; name: string; game: string; playerCount: number; maxPlayers: number; soulLinkEnabled: boolean; alreadyJoined: boolean };
@@ -45,7 +74,7 @@ export async function previewCloudRun(code: string): Promise<RunPreview | null> 
   return { id: preview.id, name: preview.name, game: preview.game, playerCount: Number(preview.player_count), maxPlayers: Number(preview.max_players), soulLinkEnabled: Boolean(preview.soul_link_enabled), alreadyJoined: Boolean(preview.already_joined) };
 }
 
-export async function createCloudRun(run: RunState, ownerName: string) {
+export async function createCloudRun(run: RunState, ownerName: string): Promise<RecoveryResult> {
   const supabase = getSupabase();
   if (!supabase) throw new Error("Supabase ist nicht konfiguriert.");
   const user = await ensureAnonymousUser();
@@ -84,10 +113,10 @@ export async function createCloudRun(run: RunState, ownerName: string) {
     active: true,
   });
   if (memberError) throw memberError;
-  return normalized;
+  return { run: normalized, recoveryCode: await issueRecoveryCode(normalized.id) };
 }
 
-export async function joinCloudRun(code: string, displayName: string, role: Exclude<RunMemberRole, "host">, color?: string) {
+export async function joinCloudRun(code: string, displayName: string, role: Exclude<RunMemberRole, "host">, color?: string): Promise<RecoveryResult> {
   const supabase = getSupabase();
   if (!supabase) throw new Error("Supabase ist nicht konfiguriert.");
   await ensureAnonymousUser();
@@ -100,7 +129,8 @@ export async function joinCloudRun(code: string, displayName: string, role: Excl
   if (joinError) throw joinError;
   const { data, error } = await supabase.from("runs").select("state").eq("id", runId).single();
   if (error) throw error;
-  return normalizeRun(data.state as RunState) as RunState;
+  const run = normalizeRun(data.state as RunState) as RunState;
+  return { run, recoveryCode: role === "player" ? await issueRecoveryCode(run.id) : "" };
 }
 
 export async function loadCloudRun(id: string) {
@@ -197,8 +227,8 @@ export function subscribeToMembership(runId: string, onMembership: (membership: 
     channel = supabase
       .channel(`membership:${runId}:${user.id}`)
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "run_members", filter: `run_id=eq.${runId}` }, (payload) => {
-        const member = payload.new as { run_id?: string; user_id?: string; player_id?: string | null; display_name?: string; role?: RunMemberRole; active?: boolean };
-        if (member.user_id === user.id) onMembership({ runId, userId: user.id, playerId: member.player_id ?? null, displayName: member.display_name ?? "", role: member.role ?? "player", active: member.active === true });
+        const member = payload.new as { run_id?: string; user_id?: string; player_id?: string | null; display_name?: string; role?: RunMemberRole; active?: boolean; inactive_reason?: "kicked" | "left" | "recovered" | null };
+        if (member.user_id === user.id) onMembership({ runId, userId: user.id, playerId: member.player_id ?? null, displayName: member.display_name ?? "", role: member.role ?? "player", active: member.active === true, inactiveReason: member.inactive_reason });
       })
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "run_members" }, (payload) => {
         const member = payload.old as { run_id?: string; user_id?: string };

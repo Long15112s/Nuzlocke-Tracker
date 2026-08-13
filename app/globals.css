@@ -843,6 +843,10 @@ button.playerMonItem:hover { border-color: rgba(114,207,255,.3); background: rgb
 .joinRoleGrid strong { font-size: 14px; }.joinRoleGrid span { color: var(--muted); font-size: 10px; line-height: 1.45; }
 .joinErrorState { display: grid; gap: 10px; padding: 18px; border: 1px solid rgba(238,91,118,.2); border-radius: 12px; background: rgba(168,45,70,.07); }
 .joinErrorState h2, .joinErrorState p { margin: 0; }
+.recoveryDialog { display: grid; gap: 12px; }
+.recoveryDialog > p { margin: 0; color: var(--soft); line-height: 1.5; }
+.recoveryCode { display: block; padding: 13px; overflow-wrap: anywhere; border: 1px solid rgba(112,203,250,.22); border-radius: 9px; color: #9fe3ff; background: rgba(45,116,157,.08); font-size: 14px; font-weight: 800; letter-spacing: .08em; text-align: center; }
+.warningText { color: #e4bd72 !important; font-size: 9px; }
 .memberBadge { margin-left: auto; padding: 2px 5px; border-radius: 999px; color: #c9b6ff; background: rgba(150,112,228,.1); border: 1px solid rgba(150,112,228,.16); font-size: 7px; white-space: nowrap; }
 .memberBadge.self { margin-left: 2px; color: #77d8ff; background: rgba(72,162,213,.1); border-color: rgba(72,162,213,.18); }
 .memberSectionLabel { padding-top: 7px; border-top: 1px solid var(--line); color: var(--muted); font-size: 8px; letter-spacing: .1em; }
