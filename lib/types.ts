@@ -71,7 +71,7 @@ export type Encounter = {
   displayName?: string;
 };
 export type SoulLinkState = "active" | "dead" | "extinguished" | "pending";
-export type SoulLink = { id: string; encounterIds: string[]; createdAt: string; displayNumber?: number; status?: SoulLinkState; deletedAt?: string; deletedBy?: string };
+export type SoulLink = { id: string; encounterIds: string[]; createdAt: string; displayNumber?: number; status?: SoulLinkState; deletedAt?: string; deletedBy?: string; deathPreviousStatus?: "team" | "box"; diedAt?: string; diedBy?: string };
 export type RandomizerSettings = {
   wild: boolean;
   trainers: boolean;

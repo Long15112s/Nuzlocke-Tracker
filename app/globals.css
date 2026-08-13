@@ -442,6 +442,9 @@ h3 { font-size: 15px; }
 .deletedLinkCard strong { color: var(--text); }
 .deletedLinkCard p, .deletedLinkCard small { margin: 0; }
 .compactDialog { max-width: 520px; }
+.undoDeathButton { color: #8ce3ae; border-color: rgba(90,190,130,.25); }
+.dialogNotice { padding: 9px 10px; border: 1px solid rgba(112,203,250,.2); border-radius: 9px; background: rgba(70,145,198,.08); color: var(--soft); font-size: 10px; }
+.dialogNotice.warning { border-color: rgba(244,190,92,.3); background: rgba(170,112,32,.09); color: #f6d28d; }
 .autocompleteItem > span { display: grid; text-align: left; }
 .autocompleteItem > span small { color: var(--muted); font-size: 10px; text-transform: capitalize; }
 .joinCard { max-width: 620px; }
@@ -759,6 +762,27 @@ button.playerMonItem:hover { border-color: rgba(114,207,255,.3); background: rgb
 }
 
 /* Faster encounter workflow */
+.encounterForm .encounterGrid { grid-template-columns: 1fr; gap: 8px; margin-top: 12px; }
+.encounterForm .encounterPlayer { display: grid; grid-template-columns: 110px minmax(210px, 1fr) 82px minmax(310px, 1.35fr); align-items: center; gap: 10px; padding: 10px 12px; border-radius: 11px; border-top-width: 2px; }
+.encounterForm .encounterPlayer h3 { margin: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.encounterForm .pokemonInputWrap { min-width: 0; }
+.encounterForm .pokemonAutocomplete input { padding: 8px 9px; }
+.quickLevel { gap: 4px; font-size: 8px; }
+.quickLevel input { width: 100%; padding: 8px; }
+.quickStatus { display: flex; gap: 4px; flex-wrap: wrap; }
+.statusQuickButton { min-height: 32px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.025); color: var(--muted); font-size: 9px; }
+.statusQuickButton:hover, .statusQuickButton:focus-visible { border-color: rgba(112,203,250,.35); color: var(--text); }
+.statusQuickButton.active { color: white; border-color: rgba(112,203,250,.5); background: rgba(70,145,198,.22); box-shadow: inset 0 0 0 1px rgba(112,203,250,.12); }
+.statusQuickButton.defeated.active, .statusQuickButton.fled.active { border-color: rgba(251,113,133,.5); background: rgba(190,55,82,.2); }
+.statusQuickButton.reroll.active { border-color: rgba(196,181,253,.45); background: rgba(133,99,205,.18); }
+.statusQuickButton.secondary { opacity: .72; }
+.fieldError { grid-column: 2 / -1; color: #ff9aac; font-size: 9px; }
+.rowNotice { grid-column: 2 / -1; padding: 5px 7px; border-radius: 7px; font-size: 9px; }
+.rowNotice.reroll { color: #d5c6ff; background: rgba(133,99,205,.1); }
+.rowNotice.lost { color: #ff9aac; background: rgba(190,55,82,.1); }
+.submitHint { display: flex; align-items: center; gap: 10px; }
+.submitHint small { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; font-family: ui-monospace, monospace; }
+.encounterForm :focus-visible { outline: 2px solid rgba(112,203,250,.72); outline-offset: 2px; }
 .locationPicker { width: min(360px, 100%); display: grid; gap: 6px; }
 .locationPicker .locationInput { max-width: none; padding: 8px 10px; }
 .locationUsedHint { color: #f4c86d; font-size: 9px; }
@@ -780,6 +804,10 @@ button.playerMonItem:hover { border-color: rgba(114,207,255,.3); background: rgb
 .recentEncounterHeading span { padding: 2px 5px; border-radius: 999px; color: #79d5ff; background: rgba(69,154,205,.1); font-size: 8px; }
 @media (max-width: 800px) {
   .locationPicker { width: 100%; }
+  .encounterForm .encounterPlayer { grid-template-columns: 1fr 82px; }
+  .encounterForm .encounterPlayer h3, .encounterForm .pokemonInputWrap, .encounterForm .quickStatus, .encounterForm .fieldError, .encounterForm .rowNotice { grid-column: 1 / -1; }
+  .encounterForm .quickLevel { grid-column: 1 / 2; }
+  .submitHint { justify-content: space-between; }
   .encounterWarning { align-items: stretch; flex-direction: column; }
   .encounterWarning > div:last-child { justify-content: flex-end; }
 }

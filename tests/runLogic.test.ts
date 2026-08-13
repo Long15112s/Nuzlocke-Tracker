@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizeRun } from "../lib/storage";
 import { canAdvanceBoss, canEditEncounters, canManagePlayers } from "../lib/permissions";
-import { getEncounterGroupState, getOccupiedSlotCount, getTeamLimitViolation, resolveMembershipAccess } from "../lib/runLogic";
+import { getEncounterGroupState, getOccupiedSlotCount, getSoulLinkDeathPreviousStatus, getSoulLinkDeathUndoTarget, getTeamLimitViolation, resolveMembershipAccess, validateQuickEncounter } from "../lib/runLogic";
 import { platinumProgress } from "../lib/gameData";
 import { makeRun } from "./fixtures";
 import { getDeleteRunErrorMessage, isAlreadyDeletedError } from "../lib/cloudErrors";
@@ -92,6 +92,19 @@ test("derives encounter SoulLink outcomes", () => {
   assert.equal(getEncounterGroupState(["caught", "reroll"]), "pending");
 });
 
+test("validates complete quick encounters for 2, 3 and 4 players", () => {
+  for (const count of [2, 3, 4]) {
+    const rows = Array.from({ length: count }, (_, index) => ({ playerId: `p${index}`, pokemonId: index + 1, apiName: "bulbasaur", level: 12, status: "caught" as const }));
+    assert.equal(validateQuickEncounter("Route 204 – Süd", rows), null);
+    assert.equal(getEncounterGroupState(rows.map((row) => row.status)), "active");
+  }
+});
+
+test("rejects incomplete Pokémon selection and invalid levels", () => {
+  assert.deepEqual(validateQuickEncounter("Route 204", [{ playerId: "p1", level: 12, status: "caught" }]), { field: "p1", message: "Bitte Pokémon aus der Liste auswählen." });
+  assert.deepEqual(validateQuickEncounter("Route 204", [{ playerId: "p1", pokemonId: 390, apiName: "chimchar", level: 101, status: "caught" }]), { field: "p1", message: "Level muss zwischen 1 und 100 liegen." });
+});
+
 test("normalizes linked Pokémon to the strongest shared status", () => {
   const run = normalizeRun(makeRun({ soulLinks: [{ id: "link", encounterIds: [], createdAt: "2026-01-01T00:00:00.000Z", status: "active" }], pokemon: [
     { id: "a", playerId: "host", species: "Gible", nickname: "", level: 5, location: "Route", status: "team", soulLinkId: "link" },
@@ -105,6 +118,20 @@ test("blocks a SoulLink move that would exceed six team Pokémon", () => {
   const incoming = { id: "incoming", playerId: "host", species: "Magikarp", nickname: "", level: 5, location: "Route", status: "box" as const };
   const run = makeRun({ pokemon: [...existing, incoming] });
   assert.equal(getTeamLimitViolation(run, new Set([incoming.id])), "Max");
+});
+
+test("restores dead SoulLinks to their previous team or box status", () => {
+  const run = makeRun({ soulLinks: [{ id: "link", encounterIds: [], createdAt: "2026-01-01T00:00:00.000Z", status: "dead", deathPreviousStatus: "team" }], pokemon: [{ id: "a", playerId: "host", species: "Gible", nickname: "", level: 5, location: "Route", status: "dead", soulLinkId: "link" }] });
+  assert.equal(getSoulLinkDeathPreviousStatus(["team"]), "team");
+  assert.deepEqual(getSoulLinkDeathUndoTarget(run, "link", "team"), { status: "team", teamLimitBlocked: false });
+  assert.deepEqual(getSoulLinkDeathUndoTarget(run, "link", "box"), { status: "box", teamLimitBlocked: false });
+  assert.deepEqual(getSoulLinkDeathUndoTarget(run, "link", undefined), { status: "box", teamLimitBlocked: false });
+});
+
+test("falls back to box when restoring a former team link would exceed the team limit", () => {
+  const team = Array.from({ length: 6 }, (_, index) => ({ id: `team-${index}`, playerId: "host", species: "Gible", nickname: "", level: 5, location: "Route", status: "team" as const }));
+  const dead = { id: "dead", playerId: "host", species: "Magikarp", nickname: "", level: 5, location: "Route", status: "dead" as const, soulLinkId: "link" };
+  assert.deepEqual(getSoulLinkDeathUndoTarget(makeRun({ pokemon: [...team, dead] }), "link", "team"), { status: "box", teamLimitBlocked: true });
 });
 
 test("permissions and membership exit states change immediately", () => {

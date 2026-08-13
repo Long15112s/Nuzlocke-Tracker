@@ -10,6 +10,8 @@ type PokemonAutocompleteProps = {
   disabled?: boolean;
   placeholder?: string;
   label?: string;
+  inputRef?: React.Ref<HTMLInputElement>;
+  onSelectionComplete?: () => void;
 };
 
 export default function PokemonAutocomplete({
@@ -19,6 +21,8 @@ export default function PokemonAutocomplete({
   disabled = false,
   placeholder = "Pokémon suchen…",
   label,
+  inputRef,
+  onSelectionComplete,
 }: PokemonAutocompleteProps) {
   const [open, setOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -113,6 +117,7 @@ export default function PokemonAutocomplete({
           abilities: [],
         });
       }
+      onSelectionComplete?.();
     }
   };
 
@@ -121,6 +126,7 @@ export default function PokemonAutocomplete({
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
+      event.stopPropagation();
       setHighlightedIndex((current) => (current + 1) % suggestions.length);
       setOpen(true);
       return;
@@ -128,6 +134,7 @@ export default function PokemonAutocomplete({
 
     if (event.key === "ArrowUp") {
       event.preventDefault();
+      event.stopPropagation();
       setHighlightedIndex((current) => (current - 1 + suggestions.length) % suggestions.length);
       setOpen(true);
       return;
@@ -135,6 +142,7 @@ export default function PokemonAutocomplete({
 
     if (event.key === "Enter") {
       event.preventDefault();
+      event.stopPropagation();
       const selected = suggestions[highlightedIndex];
       if (selected) {
         void chooseOption(selected);
@@ -143,6 +151,7 @@ export default function PokemonAutocomplete({
     }
 
     if (event.key === "Escape") {
+      if (open) event.stopPropagation();
       setOpen(false);
       setHighlightedIndex(0);
     }
@@ -152,6 +161,7 @@ export default function PokemonAutocomplete({
     <div className="pokemonAutocomplete" ref={wrapperRef}>
       {label && <label>{label}</label>}
       <input
+        ref={inputRef}
         value={value}
         onChange={(event) => {
           const nextValue = event.target.value;

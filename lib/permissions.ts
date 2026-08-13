@@ -11,3 +11,4 @@ export function canAdvanceBoss(member: RunMember | null | undefined) { return ca
 export function canManagePlayers(member: RunMember | null | undefined) { return canManageRun(member); }
 export function canDeleteSoulLink(member: RunMember | null | undefined) { return canManageRun(member); }
 export function canRestoreSoulLink(member: RunMember | null | undefined) { return canManageRun(member); }
+export function canUndoSoulLinkDeath(member: RunMember | null | undefined) { return canManageRun(member); }

@@ -50,3 +50,21 @@ test("delete lifecycle guards duplicate requests, pending saves and self realtim
   assert.match(pageSource, /if \(!deletingRunRef\.current\) leaveCloudDashboard\("deleted"/);
   assert.doesNotMatch(cloudSource, /console\.error\("deleteCloudRun failed"/);
 });
+
+test("quick encounter UI guards duplicate submits and autocomplete Enter", () => {
+  const pageSource = readFileSync("app/page.tsx", "utf8");
+  const autocompleteSource = readFileSync("components/PokemonAutocomplete.tsx", "utf8");
+  assert.match(pageSource, /if \(readOnly \|\| submitLockRef\.current\) return/);
+  assert.match(pageSource, /event\.ctrlKey && event\.key === "Enter"/);
+  assert.match(autocompleteSource, /event\.key === "Enter"[\s\S]*event\.preventDefault\(\)[\s\S]*event\.stopPropagation\(\)/);
+});
+
+test("death undo is host-only, atomic and separate from soft delete", () => {
+  const pageSource = readFileSync("app/page.tsx", "utf8");
+  const permissionsSource = readFileSync("lib/permissions.ts", "utf8");
+  assert.match(permissionsSource, /canUndoSoulLinkDeath[\s\S]*canManageRun/);
+  assert.match(pageSource, /if \(!canUndoSoulLinkDeath\(currentMember\) \|\| soulLinkMutationRef\.current\) return/);
+  assert.match(pageSource, /pokemon\.soulLinkId === linkId \? \{ \.\.\.pokemon, status: target\.status \}/);
+  assert.match(pageSource, /deathPreviousStatus: undefined, diedAt: undefined, diedBy: undefined/);
+  assert.match(pageSource, /deletedAt: undefined, deletedBy: undefined/);
+});
