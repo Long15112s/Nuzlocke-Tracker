@@ -60,9 +60,12 @@ function Setup({ onCreate, onRecover }: { onCreate: (run: RunState) => void | Pr
   const [playerCount, setPlayerCount] = useState<RunPlayerCount>(3);
   const [soulLinkEnabled, setSoulLinkEnabled] = useState(true);
   const [randomizer, setRandomizer] = useState(defaultRandomizer);
+  const [creatingRun, setCreatingRun] = useState(false);
+  const [createError, setCreateError] = useState("");
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (creatingRun) return;
     if (step < 4) { setStep(step + 1); return; }
     const cleanHostName = hostName.trim();
     if (!cleanHostName) { setStep(2); return; }
@@ -73,7 +76,9 @@ function Setup({ onCreate, onRecover }: { onCreate: (run: RunState) => void | Pr
     const participantId = getLocalParticipantId();
     const hostPlayerId = makeId("player");
     const hostMemberId = makeId("member");
-    await onCreate({
+    setCreatingRun(true);
+    setCreateError("");
+    try { await onCreate({
       id: crypto.randomUUID(),
       inviteCode: makeCode(),
       name: name.trim() || "Randomizer SoulLink",
@@ -99,7 +104,11 @@ function Setup({ onCreate, onRecover }: { onCreate: (run: RunState) => void | Pr
       pokemon: [],
       soulLinks: [],
       randomizer,
-    });
+    }); } catch (cause) {
+      setCreateError(cause instanceof Error ? cause.message : "Der Run konnte nicht erstellt werden.");
+    } finally {
+      setCreatingRun(false);
+    }
   };
 
   return (
@@ -141,7 +150,8 @@ function Setup({ onCreate, onRecover }: { onCreate: (run: RunState) => void | Pr
 
           {step === 4 && <div className="setupSummary"><div><span>Run</span><strong>{name}</strong></div><div><span>Spiel</span><strong>{game}</strong></div><div><span>Spielerplätze</span><strong>1 / {playerCount} belegt</strong></div><div><span>Host</span><strong>{hostName}</strong></div><div><span>Modus</span><strong>{soulLinkEnabled ? "SoulLink aktiv" : "Nuzlocke"}</strong></div></div>}
 
-          <div className="setupActions">{step === 1 && isSupabaseConfigured && <button className="ghostButton" type="button" onClick={onRecover}>Bestehenden Spieler wiederherstellen</button>}{step > 1 && <button className="ghostButton" type="button" onClick={() => setStep(step - 1)}>Zurück</button>}<button className="primaryButton big" type="submit">{step === 4 ? "Run starten" : "Weiter"}</button></div>
+          {createError && <p className="errorText" role="alert">{createError}</p>}
+          <div className="setupActions">{step === 1 && isSupabaseConfigured && <button className="ghostButton" type="button" onClick={onRecover}>Bestehenden Spieler wiederherstellen</button>}{step > 1 && <button className="ghostButton" type="button" disabled={creatingRun} onClick={() => setStep(step - 1)}>Zurück</button>}<button className="primaryButton big" type="submit" disabled={creatingRun}>{creatingRun ? "Run wird erstellt …" : step === 4 ? "Run starten" : "Weiter"}</button></div>
         </form>
       </section>
     </main>
@@ -151,6 +161,10 @@ function Setup({ onCreate, onRecover }: { onCreate: (run: RunState) => void | Pr
 function RecoveryCodeDialog({ code, recovered, onClose }: { code: string; recovered?: boolean; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   return <div className="dialogBackdrop"><section className="pokemonDialog compactDialog recoveryDialog"><header className="pokemonDialogHeader"><div><p className="eyebrow">WIEDERHERSTELLUNGSCODE</p><h2>{recovered ? "Spieler erfolgreich wiederhergestellt" : "Wiederherstellungscode speichern"}</h2></div></header><p>{recovered ? "Dein alter Wiederherstellungscode ist jetzt ungültig. Speichere deinen neuen Code:" : "Mit diesem Code kannst du deinen Spieler und deine Rechte wiederherstellen, falls du Browserdaten verlierst oder das Gerät wechselst."}</p><code className="recoveryCode">{code}</code><button className="ghostButton" onClick={async () => { await navigator.clipboard.writeText(code); setCopied(true); }}>{copied ? "Kopiert ✓" : "Code kopieren"}</button><p className="warningText">Bewahre diesen Code sicher auf. Wer Run-Code und deinen persönlichen Wiederherstellungscode besitzt, kann deinen Spieler übernehmen. Der Code wird nicht erneut angezeigt.</p><button className="primaryButton" onClick={onClose}>Weiter</button></section></div>;
+}
+
+function RecoveryWarningDialog({ onClose }: { onClose: () => void }) {
+  return <div className="dialogBackdrop"><section className="pokemonDialog compactDialog recoveryDialog"><p className="eyebrow">WIEDERHERSTELLUNG</p><h2>Run erfolgreich gestartet</h2><p>Der Wiederherstellungscode konnte nicht erzeugt werden. Du kannst ihn später in den Run-Einstellungen erstellen.</p><button className="primaryButton" onClick={onClose}>Zum Dashboard</button></section></div>;
 }
 
 function RecoverPlayer({ initialRunCode, onCancel, onRecover }: { initialRunCode?: string; onCancel: () => void; onRecover: (runCode: string, recoveryCode: string) => Promise<void> }) {
@@ -1371,6 +1385,7 @@ export default function Home() {
   const [exitNotice, setExitNotice] = useState<{ kind: "kicked" | "deleted" | "recovered"; runName: string } | null>(null);
   const [recoveryMode, setRecoveryMode] = useState(false);
   const [recoveryDialog, setRecoveryDialog] = useState<{ code: string; recovered?: boolean } | null>(null);
+  const [recoveryWarning, setRecoveryWarning] = useState(false);
   const lastRemote = useRef("");
   const deletingRunRef = useRef(false);
   const pendingCloudSaveRef = useRef<number | null>(null);
@@ -1480,14 +1495,17 @@ export default function Home() {
     deletingRunRef.current = false;
     const normalized = next;
     if (isSupabaseConfigured) {
-      const result = await createCloudRun(normalized, normalized.players[0]?.name ?? "Host");
-      const online = result.run;
+      const online = await createCloudRun(normalized, normalized.players[0]?.name ?? "Host");
       lastRemote.current = JSON.stringify(online);
       setCloudMode(true);
       setRun(online);
       setParticipantId(await getCloudParticipantId());
-      setRecoveryDialog({ code: result.recoveryCode });
       window.history.replaceState({}, "", "/");
+      try {
+        setRecoveryDialog({ code: await issueRecoveryCode(online.id) });
+      } catch {
+        setRecoveryWarning(true);
+      }
     } else {
       setCloudMode(false);
       setRun(normalized);
@@ -1496,8 +1514,7 @@ export default function Home() {
 
   const joinRun = async (name: string, role: Exclude<RunMemberRole, "host">, color: string) => {
     if (!joinCode) return;
-    const result = await joinCloudRun(joinCode, name, role, color);
-    const online = result.run;
+    const online = await joinCloudRun(joinCode, name, role, color);
     lastRemote.current = JSON.stringify(online);
     setCloudMode(true);
     setRun(online);
@@ -1506,7 +1523,13 @@ export default function Home() {
     saveRun(online);
     window.history.replaceState({}, "", "/");
     setJoinCode(null);
-    if (result.recoveryCode) setRecoveryDialog({ code: result.recoveryCode });
+    if (role === "player") {
+      try {
+        setRecoveryDialog({ code: await issueRecoveryCode(online.id) });
+      } catch {
+        setRecoveryWarning(true);
+      }
+    }
   };
 
   const recoverPlayer = async (runCode: string, recoveryCode: string) => {
@@ -1554,5 +1577,5 @@ export default function Home() {
     setJoinAccepted(false);
     window.history.replaceState({}, "", "/");
   };
-  return <>{recoveryDialog && <RecoveryCodeDialog code={recoveryDialog.code} recovered={recoveryDialog.recovered} onClose={() => setRecoveryDialog(null)} />}<Dashboard run={run} setRun={setRun} cloudMode={cloudMode} currentMember={currentMember} onDeleteOnline={deleteOnlineRun} onRecoveryCode={async (rotate) => setRecoveryDialog({ code: rotate ? await rotateRecoveryCode(run.id) : await issueRecoveryCode(run.id) })} /></>;
+  return <>{recoveryDialog && <RecoveryCodeDialog code={recoveryDialog.code} recovered={recoveryDialog.recovered} onClose={() => setRecoveryDialog(null)} />}{recoveryWarning && <RecoveryWarningDialog onClose={() => setRecoveryWarning(false)} />}<Dashboard run={run} setRun={setRun} cloudMode={cloudMode} currentMember={currentMember} onDeleteOnline={deleteOnlineRun} onRecoveryCode={async (rotate) => setRecoveryDialog({ code: rotate ? await rotateRecoveryCode(run.id) : await issueRecoveryCode(run.id) })} /></>;
 }

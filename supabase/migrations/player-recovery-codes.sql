@@ -31,6 +31,7 @@ returns text language sql immutable set search_path = public as $$
   select regexp_replace(upper(raw_code), '(.{4})(?=.)', '\1-', 'g');
 $$;
 
+drop function if exists public.issue_member_recovery_code(uuid);
 create or replace function public.issue_member_recovery_code(target_run uuid)
 returns text language plpgsql security definer set search_path = public as $$
 declare raw_code text; member_row public.run_members%rowtype;
@@ -40,13 +41,14 @@ begin
     where run_id = target_run and user_id = auth.uid() and active and role in ('host','player') for update;
   if not found then raise exception 'Active player membership required' using errcode = '42501'; end if;
   if member_row.recovery_code_hash is not null then raise exception 'Recovery code already configured' using errcode = 'P0001'; end if;
-  raw_code := upper(encode(gen_random_bytes(16), 'hex'));
-  update public.run_members set recovery_code_hash = digest(raw_code, 'sha256'), recovery_code_created_at = now()
+  raw_code := upper(encode(extensions.gen_random_bytes(16), 'hex'));
+  update public.run_members set recovery_code_hash = extensions.digest(raw_code, 'sha256'), recovery_code_created_at = now()
     where run_id = target_run and user_id = auth.uid();
   return public.format_member_recovery_code(raw_code);
 end;
 $$;
 
+drop function if exists public.rotate_member_recovery_code(uuid);
 create or replace function public.rotate_member_recovery_code(target_run uuid)
 returns text language plpgsql security definer set search_path = public as $$
 declare raw_code text;
@@ -55,13 +57,14 @@ begin
   perform 1 from public.run_members
     where run_id = target_run and user_id = auth.uid() and active and role in ('host','player') for update;
   if not found then raise exception 'Active player membership required' using errcode = '42501'; end if;
-  raw_code := upper(encode(gen_random_bytes(16), 'hex'));
-  update public.run_members set recovery_code_hash = digest(raw_code, 'sha256'), recovery_code_created_at = now()
+  raw_code := upper(encode(extensions.gen_random_bytes(16), 'hex'));
+  update public.run_members set recovery_code_hash = extensions.digest(raw_code, 'sha256'), recovery_code_created_at = now()
     where run_id = target_run and user_id = auth.uid();
   return public.format_member_recovery_code(raw_code);
 end;
 $$;
 
+drop function if exists public.recover_run_member(text,text);
 create or replace function public.recover_run_member(code text, recovery_code text)
 returns table(run_id uuid, new_recovery_code text)
 language plpgsql security definer set search_path = public as $$
@@ -78,14 +81,14 @@ begin
   end if;
   select * into old_member from public.run_members
     where run_id = target_run.id and active and role in ('host','player')
-      and recovery_code_hash = digest(normalized_code, 'sha256') for update;
+      and recovery_code_hash = extensions.digest(normalized_code, 'sha256') for update;
   if not found then raise exception 'Run or recovery code is invalid' using errcode = '22023'; end if;
 
   update public.run_members set active = false, recovery_code_hash = null, inactive_reason = 'recovered', recovered_at = now()
     where run_id = old_member.run_id and user_id = old_member.user_id;
-  raw_new_code := upper(encode(gen_random_bytes(16), 'hex'));
+  raw_new_code := upper(encode(extensions.gen_random_bytes(16), 'hex'));
   insert into public.run_members(run_id,user_id,player_id,display_name,role,color,active,joined_at,recovery_code_hash,recovery_code_created_at,recovered_at,inactive_reason)
-  values(old_member.run_id,auth.uid(),old_member.player_id,old_member.display_name,old_member.role,old_member.color,true,now(),digest(raw_new_code,'sha256'),now(),now(),null)
+  values(old_member.run_id,auth.uid(),old_member.player_id,old_member.display_name,old_member.role,old_member.color,true,now(),extensions.digest(raw_new_code,'sha256'),now(),now(),null)
   on conflict (run_id,user_id) do update set player_id=excluded.player_id,display_name=excluded.display_name,role=excluded.role,color=excluded.color,active=true,joined_at=now(),recovery_code_hash=excluded.recovery_code_hash,recovery_code_created_at=now(),recovered_at=now(),inactive_reason=null;
 
   update public.runs set
@@ -146,3 +149,6 @@ grant execute on function public.leave_run(uuid) to authenticated;
 revoke select on public.run_members from authenticated;
 grant select (run_id,user_id,player_id,display_name,role,color,active,joined_at,recovery_code_created_at,recovered_at,inactive_reason)
   on public.run_members to authenticated;
+
+-- Make newly created RPC signatures visible to PostgREST immediately.
+notify pgrst, 'reload schema';

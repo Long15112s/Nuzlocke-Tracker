@@ -41,6 +41,27 @@ test("member recovery is hashed, single-use and preserves the logical player", (
   assert.match(sql, /inactive_reason='kicked'|inactive_reason = 'kicked'/i);
   assert.match(sql, /inactive_reason='left'|inactive_reason = 'left'/i);
   assert.doesNotMatch(cloud, /(?:localStorage[\s\S]*recovery|console\.log\([\s\S]*recovery)/i);
+  assert.match(sql, /create or replace function public\.issue_member_recovery_code\(target_run uuid\)/i);
+  assert.match(sql, /create or replace function public\.rotate_member_recovery_code\(target_run uuid\)/i);
+  assert.match(sql, /create or replace function public\.recover_run_member\(code text, recovery_code text\)/i);
+  assert.match(cloud, /rpc\("issue_member_recovery_code", \{ target_run: runId \}\)/);
+  assert.match(cloud, /rpc\("rotate_member_recovery_code", \{ target_run: runId \}\)/);
+  assert.match(cloud, /rpc\("recover_run_member", \{ code: runCode\.trim\(\)\.toUpperCase\(\), recovery_code: recoveryCode \}\)/);
+  assert.match(sql, /notify pgrst, 'reload schema'/i);
+  assert.match(sql, /extensions\.gen_random_bytes\(16\)/i);
+  assert.match(sql, /extensions\.digest\(/i);
+  assert.doesNotMatch(sql, /(^|[^.\w])gen_random_bytes\(/im);
+  assert.doesNotMatch(sql, /(^|[^.\w])digest\(/im);
+});
+
+test("run creation and join do not depend on recovery RPC availability", () => {
+  const page = readFileSync("app/page.tsx", "utf8");
+  const cloud = readFileSync("lib/cloud.ts", "utf8");
+  assert.doesNotMatch(cloud, /createCloudRun[\s\S]*return \{ run: normalized, recoveryCode:/);
+  assert.doesNotMatch(cloud, /joinCloudRun[\s\S]*await issueRecoveryCode/);
+  assert.match(page, /const online = await createCloudRun[\s\S]*setRun\(online\)[\s\S]*try \{[\s\S]*issueRecoveryCode/);
+  assert.match(page, /const online = await joinCloudRun[\s\S]*setRun\(online\)[\s\S]*try \{[\s\S]*issueRecoveryCode/);
+  assert.match(page, /if \(creatingRun\) return;[\s\S]*finally \{[\s\S]*setCreatingRun\(false\)/);
 });
 
 test("delete RPC is host-scoped, idempotent and relies on run-local cascades", () => {

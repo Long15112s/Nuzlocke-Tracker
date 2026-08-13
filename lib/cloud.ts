@@ -74,7 +74,7 @@ export async function previewCloudRun(code: string): Promise<RunPreview | null> 
   return { id: preview.id, name: preview.name, game: preview.game, playerCount: Number(preview.player_count), maxPlayers: Number(preview.max_players), soulLinkEnabled: Boolean(preview.soul_link_enabled), alreadyJoined: Boolean(preview.already_joined) };
 }
 
-export async function createCloudRun(run: RunState, ownerName: string): Promise<RecoveryResult> {
+export async function createCloudRun(run: RunState, ownerName: string): Promise<RunState> {
   const supabase = getSupabase();
   if (!supabase) throw new Error("Supabase ist nicht konfiguriert.");
   const user = await ensureAnonymousUser();
@@ -113,10 +113,10 @@ export async function createCloudRun(run: RunState, ownerName: string): Promise<
     active: true,
   });
   if (memberError) throw memberError;
-  return { run: normalized, recoveryCode: await issueRecoveryCode(normalized.id) };
+  return normalized;
 }
 
-export async function joinCloudRun(code: string, displayName: string, role: Exclude<RunMemberRole, "host">, color?: string): Promise<RecoveryResult> {
+export async function joinCloudRun(code: string, displayName: string, role: Exclude<RunMemberRole, "host">, color?: string): Promise<RunState> {
   const supabase = getSupabase();
   if (!supabase) throw new Error("Supabase ist nicht konfiguriert.");
   await ensureAnonymousUser();
@@ -129,8 +129,7 @@ export async function joinCloudRun(code: string, displayName: string, role: Excl
   if (joinError) throw joinError;
   const { data, error } = await supabase.from("runs").select("state").eq("id", runId).single();
   if (error) throw error;
-  const run = normalizeRun(data.state as RunState) as RunState;
-  return { run, recoveryCode: role === "player" ? await issueRecoveryCode(run.id) : "" };
+  return normalizeRun(data.state as RunState) as RunState;
 }
 
 export async function loadCloudRun(id: string) {
