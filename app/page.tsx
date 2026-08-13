@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import PokemonAutocomplete from "@/components/PokemonAutocomplete";
 import PokemonSprite from "@/components/PokemonSprite";
 import PokemonRunSearch from "@/components/PokemonRunSearch";
+import { getInviteUrl } from "@/lib/inviteUrl";
 import { clearRun, getLocalParticipantId, loadRun, saveRun } from "@/lib/storage";
 import { cloudEnabled, isSupabaseConfigured } from "@/lib/supabase";
 import { createCloudRun, deleteCloudRun, getCloudMembership, getCloudParticipantId, joinCloudRun, leaveCloudRun, loadCloudRun, manageCloudMember, previewCloudRun, saveCloudRun, subscribeToCloudRun, subscribeToMembership, type RunPreview } from "@/lib/cloud";
@@ -460,9 +461,8 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline }: { 
     });
   };
 
-  const shareLink = typeof window !== "undefined" ? `${window.location.origin}/?join=${run.inviteCode}` : run.inviteCode;
   const copyLink = async () => {
-    await navigator.clipboard.writeText(shareLink);
+    await navigator.clipboard.writeText(getInviteUrl(run.inviteCode));
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   };
