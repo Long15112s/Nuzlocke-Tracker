@@ -447,6 +447,23 @@ h3 { font-size: 15px; }
 .dialogNotice.warning { border-color: rgba(244,190,92,.3); background: rgba(170,112,32,.09); color: #f6d28d; }
 .autocompleteItem > span { display: grid; text-align: left; }
 .autocompleteItem > span small { color: var(--muted); font-size: 10px; text-transform: capitalize; }
+.pokemonRunSearch { display: grid; gap: 16px; }
+.runSearchInput { max-width: 620px; display: grid; gap: 6px; }
+.runSearchInput > span { color: var(--muted); font-size: 10px; }
+.familyHeader { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid rgba(112,203,250,.16); border-radius: 11px; background: rgba(70,145,198,.055); }
+.familyHeader span { color: var(--muted); font-size: 8px; text-transform: uppercase; letter-spacing: .1em; }
+.familyHeader strong { font-size: 12px; }
+.runSearchResults { display: grid; grid-template-columns: repeat(auto-fit,minmax(270px,1fr)); gap: 10px; }
+.runSearchCard { display: grid; grid-template-columns: 58px minmax(0,1fr) auto; grid-template-rows: auto auto; align-items: center; gap: 8px 10px; padding: 12px; border: 1px solid var(--line); border-radius: 13px; background: rgba(15,21,27,.72); }
+.runSearchCard > img, .runSearchCard > .pokemonSprite { grid-row: 1 / 3; }
+.runSearchIdentity { display: grid; gap: 2px; min-width: 0; }
+.runSearchIdentity h3, .runSearchIdentity strong { margin: 0; overflow: hidden; text-overflow: ellipsis; }
+.runSearchIdentity h3 { font-size: 13px; }.runSearchIdentity strong { color: var(--primary); font-size: 10px; }.runSearchIdentity span { color: var(--muted); font-size: 9px; }
+.runSearchMeta { display: flex; flex-wrap: wrap; gap: 5px 9px; color: var(--muted); font-size: 9px; }
+.runSearchMeta small { color: #f4c86d; }
+.runSearchStatus { grid-column: 3; grid-row: 1 / 3; align-self: center; padding: 5px 7px; border: 1px solid var(--line); border-radius: 999px; font-size: 8px; white-space: nowrap; }
+.runSearchStatus.team { color: #8ce3ae; }.runSearchStatus.caught { color: #79d0ff; }.runSearchStatus.dead { color: #ff8298; }.runSearchStatus.fled { color: #f4c86d; }
+@media (max-width: 600px) { .runSearchResults { grid-template-columns: 1fr; }.runSearchCard { grid-template-columns: 52px minmax(0,1fr); }.runSearchStatus { grid-column: 2; grid-row: auto; justify-self: start; } }
 .joinCard { max-width: 620px; }
 code { background: #0e1216; border: 1px solid var(--line); border-radius: 6px; padding: 2px 5px; }
 button:disabled { opacity: .6; cursor: wait; }

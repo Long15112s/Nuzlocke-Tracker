@@ -56,7 +56,6 @@ export function normalizeRun(run: RunState | null | undefined): RunState | null 
   }));
   next.members = (run.members?.length ? run.members : legacyMembers).map((member) => ({ ...member, active: member.playerId && placeholderPlayerIds.has(member.playerId) ? false : member.active, color: member.color ?? next.players.find((player) => player.id === member.playerId)?.color }));
   next.soulLinkEnabled = run.soulLinkEnabled ?? true;
-
   next.encounters = run.encounters.map((encounter) => ({
     ...encounter,
     encounterGroupId: encounter.encounterGroupId ?? `legacy_${encounter.createdAt}_${encounter.location}`,

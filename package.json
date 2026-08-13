@@ -12,7 +12,8 @@
     "test:unit": "tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
     "test:e2e": "node scripts/run-e2e.mjs",
     "test:all": "npm run typecheck && npm run test:unit && npm run test:e2e && npm run build",
-    "generate:pokemon-de": "node scripts/generate-pokemon-de-index.mjs"
+    "generate:pokemon-de": "node scripts/generate-pokemon-de-index.mjs",
+    "generate:pokemon-evolutions": "node scripts/generate-pokemon-evolutions.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

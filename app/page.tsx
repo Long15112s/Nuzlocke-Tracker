@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import PokemonAutocomplete from "@/components/PokemonAutocomplete";
 import PokemonSprite from "@/components/PokemonSprite";
+import PokemonRunSearch from "@/components/PokemonRunSearch";
 import { clearRun, getLocalParticipantId, loadRun, saveRun } from "@/lib/storage";
 import { cloudEnabled, isSupabaseConfigured } from "@/lib/supabase";
 import { createCloudRun, deleteCloudRun, getCloudMembership, getCloudParticipantId, joinCloudRun, leaveCloudRun, loadCloudRun, manageCloudMember, previewCloudRun, saveCloudRun, subscribeToCloudRun, subscribeToMembership, type RunPreview } from "@/lib/cloud";
@@ -376,7 +377,7 @@ function EncounterForm({ run, setRun, readOnly = false, onEvent }: { run: RunSta
 }
 
 function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline }: { run: RunState; setRun: (next: RunState) => void; cloudMode: boolean; currentMember: RunMember | null; onDeleteOnline: () => Promise<void> }) {
-  type DashboardTab = "overview" | "encounters" | "pokemon" | "boss" | "settings" | "notes";
+  type DashboardTab = "overview" | "encounters" | "pokemon" | "search" | "boss" | "settings" | "notes";
   type DashboardEvent = { id: string; message: string; timestamp: string; type?: "boss-defeated" | "system"; bossIndex?: number };
 
   const [tab, setTab] = useState<DashboardTab>("overview");
@@ -1082,13 +1083,10 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline }: { 
   );
 
   const renderNotes = () => (
-    <section className="panel notePanel">
-      <p className="eyebrow">NOTIZEN</p>
-      <h2>Run-Notiz</h2>
-      <div className="noteBox">
-        <p>{run.randomizer.notes || "Noch keine Notizen für diesen Run."}</p>
-      </div>
-      <button className="primaryButton" onClick={() => setTab("settings")}>Bearbeiten</button>
+    <section className="panel">
+      <p className="eyebrow">GEMEINSAMER RUN</p>
+      <h2>Notizen</h2>
+      <label>Run-Notiz<textarea rows={12} value={run.randomizer.notes} onChange={(event) => setRun({ ...run, randomizer: { ...run.randomizer, notes: event.target.value } })} placeholder="Regeln, Ziele oder wichtige Hinweise für das Team …" /></label>
     </section>
   );
 
@@ -1132,6 +1130,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline }: { 
             ["overview", "Dashboard"],
             ["encounters", "Encounters"],
             ["pokemon", "Teams & Friedhof"],
+            ["search", "Pokémon-Suche"],
             ["boss", "Boss & Level Cap"],
             ["settings", "Run-Einstellungen"],
             ["notes", "Notizen"],
@@ -1191,6 +1190,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline }: { 
         {tab === "overview" && renderOverview()}
         {tab === "encounters" && renderEncounters()}
         {tab === "pokemon" && renderPokemon()}
+        {tab === "search" && <PokemonRunSearch run={run} />}
         {tab === "boss" && renderBoss()}
         {tab === "settings" && renderSettings()}
         {tab === "notes" && renderNotes()}

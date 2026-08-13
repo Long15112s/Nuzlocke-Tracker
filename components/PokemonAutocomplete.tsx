@@ -12,6 +12,7 @@ type PokemonAutocompleteProps = {
   label?: string;
   inputRef?: React.Ref<HTMLInputElement>;
   onSelectionComplete?: () => void;
+  loadDetailsOnSelect?: boolean;
 };
 
 export default function PokemonAutocomplete({
@@ -23,6 +24,7 @@ export default function PokemonAutocomplete({
   label,
   inputRef,
   onSelectionComplete,
+  loadDetailsOnSelect = true,
 }: PokemonAutocompleteProps) {
   const [open, setOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -102,6 +104,19 @@ export default function PokemonAutocomplete({
     setOpen(false);
 
     if (onSelect) {
+      if (!loadDetailsOnSelect) {
+        onSelect({
+          id: option.id,
+          name: option.name,
+          apiName: option.apiName ?? option.name,
+          displayName: option.displayName ?? option.name,
+          spriteUrl: option.spriteUrl,
+          types: [],
+          abilities: [],
+        });
+        onSelectionComplete?.();
+        return;
+      }
       const details = await getPokemonDetails(option.name);
 
       if (details) {
