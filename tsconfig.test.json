@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "outDir": ".test-dist",
+    "rootDir": ".",
+    "plugins": []
+  },
+  "include": ["tests/**/*.ts", "lib/types.ts", "lib/storage.ts", "lib/gameData.ts", "lib/permissions.ts", "lib/runLogic.ts", "lib/cloudErrors.ts", "lib/pokeapi.ts"]
+}

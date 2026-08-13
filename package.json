@@ -6,7 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run test:unit",
+    "test:unit": "tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
+    "test:e2e": "node scripts/run-e2e.mjs",
+    "test:all": "npm run typecheck && npm run test:unit && npm run test:e2e && npm run build",
+    "generate:pokemon-de": "node scripts/generate-pokemon-de-index.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

@@ -21,19 +21,43 @@ export const platinumProgress: BossProgress[] = [
   { name: "Cynthia – Champ", levelCap: 62 },
 ];
 
-export const platinumEncounterLocations = [
-  "Starter", "Route 201", "Verity Lakefront", "Route 202", "Route 203",
-  "Oreburgh Gate", "Oreburgh Mine", "Route 204 South", "Ravaged Path",
-  "Route 204 North", "Floaroma Meadow", "Valley Windworks", "Route 205 South",
-  "Eterna Forest", "Route 205 North", "Old Chateau", "Route 206", "Wayward Cave",
-  "Route 207", "Mt. Coronet", "Route 208", "Route 209", "Lost Tower",
-  "Solaceon Ruins", "Route 210 South", "Route 215", "Route 214", "Valor Lakefront",
-  "Route 213", "Route 212", "Trophy Garden", "Great Marsh", "Route 218",
-  "Canalave City", "Iron Island", "Route 216", "Route 217", "Acuity Lakefront",
-  "Lake Acuity", "Route 211", "Route 219", "Route 220", "Route 221", "Pal Park",
-  "Route 222", "Sunyshore City", "Route 223", "Victory Road", "Pokémon League",
-  "Sendoff Spring", "Turnback Cave", "Fuego Ironworks", "Lake Valor", "Lake Verity",
+export type EncounterLocationOption = { id: string; label: string; legacyLabels?: readonly string[] };
+export const platinumEncounterLocations: readonly EncounterLocationOption[] = [
+  { id: "starter", label: "Starter" }, { id: "route-201", label: "Route 201" },
+  { id: "verity-lakefront", label: "See der Wahrheit – Ufer", legacyLabels: ["Verity Lakefront"] },
+  ...Array.from({ length: 2 }, (_, i) => ({ id: `route-${202 + i}`, label: `Route ${202 + i}` })),
+  { id: "oreburgh-gate", label: "Erzelingen-Tor", legacyLabels: ["Oreburgh Gate"] },
+  { id: "oreburgh-mine", label: "Erzelingen-Mine", legacyLabels: ["Oreburgh Mine"] },
+  { id: "route-204-south", label: "Route 204 – Süd", legacyLabels: ["Route 204 South"] },
+  { id: "ravaged-path", label: "Verwüsteter Pfad", legacyLabels: ["Ravaged Path"] },
+  { id: "route-204-north", label: "Route 204 – Nord", legacyLabels: ["Route 204 North"] },
+  { id: "floaroma-meadow", label: "Flori-Wiese", legacyLabels: ["Floaroma Meadow"] },
+  { id: "valley-windworks", label: "Windkraftwerk", legacyLabels: ["Valley Windworks"] },
+  { id: "route-205-south", label: "Route 205 – Süd", legacyLabels: ["Route 205 South"] },
+  { id: "eterna-forest", label: "Ewigwald", legacyLabels: ["Eterna Forest"] },
+  { id: "route-205-north", label: "Route 205 – Nord", legacyLabels: ["Route 205 North"] },
+  { id: "old-chateau", label: "Alte Villa", legacyLabels: ["Old Chateau"] },
+  { id: "route-206", label: "Route 206" }, { id: "wayward-cave", label: "Bizarre Höhle", legacyLabels: ["Wayward Cave"] },
+  { id: "route-207", label: "Route 207" }, { id: "mt-coronet", label: "Kraterberg", legacyLabels: ["Mt. Coronet"] },
+  ...Array.from({ length: 16 }, (_, i) => ({ id: `route-${208 + i}`, label: `Route ${208 + i}` })),
+  { id: "lost-tower", label: "Turm der Ruhenden", legacyLabels: ["Lost Tower"] },
+  { id: "solaceon-ruins", label: "Trostu-Ruinen", legacyLabels: ["Solaceon Ruins"] },
+  { id: "trophy-garden", label: "Trophäengarten", legacyLabels: ["Trophy Garden"] },
+  { id: "great-marsh", label: "Großmoor", legacyLabels: ["Great Marsh"] },
+  { id: "canalave-city", label: "Fleetburg", legacyLabels: ["Canalave City"] },
+  { id: "iron-island", label: "Eiseninsel", legacyLabels: ["Iron Island"] },
+  { id: "victory-road", label: "Siegesstraße", legacyLabels: ["Victory Road"] },
+  { id: "pokemon-league", label: "Pokémon-Liga", legacyLabels: ["Pokémon League"] },
+  { id: "sendoff-spring", label: "Scheidequelle", legacyLabels: ["Sendoff Spring"] },
+  { id: "turnback-cave", label: "Höhle der Umkehr", legacyLabels: ["Turnback Cave"] },
+  { id: "fuego-ironworks", label: "Feuriohütte", legacyLabels: ["Fuego Ironworks"] },
+  { id: "lake-valor", label: "See der Kühnheit", legacyLabels: ["Lake Valor"] },
+  { id: "lake-verity", label: "See der Wahrheit", legacyLabels: ["Lake Verity"] },
 ] as const;
+
+export function getPlatinumLocationLabel(value: string) {
+  return platinumEncounterLocations.find((place) => place.id === value || place.label === value || place.legacyLabels?.includes(value))?.label ?? value;
+}
 
 export function isPlatinum(game: string) {
   const normalized = game.toLowerCase();

@@ -4,8 +4,11 @@ export type EncounterStatus = "caught" | "defeated" | "fled" | "reroll" | "skipp
 export type PokemonApiSummary = {
   id?: number;
   name: string;
+  apiName?: string;
+  englishName?: string;
   url: string;
   spriteUrl?: string;
+  displayName?: string;
 };
 
 export type PokemonSelection = {
@@ -68,7 +71,7 @@ export type Encounter = {
   displayName?: string;
 };
 export type SoulLinkState = "active" | "dead" | "extinguished" | "pending";
-export type SoulLink = { id: string; encounterIds: string[]; createdAt: string; displayNumber?: number; status?: SoulLinkState };
+export type SoulLink = { id: string; encounterIds: string[]; createdAt: string; displayNumber?: number; status?: SoulLinkState; deletedAt?: string; deletedBy?: string };
 export type RandomizerSettings = {
   wild: boolean;
   trainers: boolean;

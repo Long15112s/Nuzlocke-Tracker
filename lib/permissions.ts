@@ -9,3 +9,5 @@ export function canEditPokemon(member: RunMember | null | undefined) { return me
 export function canEditPokemonOwnedBy(member: RunMember | null | undefined, playerId: string) { return canManageRun(member) || (canEditPokemon(member) && member?.playerId === playerId); }
 export function canAdvanceBoss(member: RunMember | null | undefined) { return canManageRun(member); }
 export function canManagePlayers(member: RunMember | null | undefined) { return canManageRun(member); }
+export function canDeleteSoulLink(member: RunMember | null | undefined) { return canManageRun(member); }
+export function canRestoreSoulLink(member: RunMember | null | undefined) { return canManageRun(member); }

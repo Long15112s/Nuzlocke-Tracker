@@ -1,6 +1,10 @@
 import { getSupabase } from "./supabase";
 import { normalizeRun } from "./storage";
 import type { RunMemberRole, RunState } from "./types";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+import { isAlreadyDeletedError } from "./cloudErrors";
+
+export type CloudMembership = { runId: string; userId: string; playerId: string | null; displayName: string; role: RunMemberRole; active: boolean };
 
 async function ensureAnonymousUser() {
   const supabase = getSupabase();
@@ -16,6 +20,16 @@ async function ensureAnonymousUser() {
 
 export async function getCloudParticipantId() {
   return (await ensureAnonymousUser()).id;
+}
+
+export async function getCloudMembership(runId: string): Promise<CloudMembership | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  const user = await ensureAnonymousUser();
+  const { data, error } = await supabase.from("run_members").select("run_id,user_id,player_id,display_name,role,active").eq("run_id", runId).eq("user_id", user.id).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return { runId: data.run_id, userId: data.user_id, playerId: data.player_id, displayName: data.display_name, role: data.role as RunMemberRole, active: data.active };
 }
 
 export type RunPreview = { id: string; name: string; game: string; playerCount: number; maxPlayers: number; soulLinkEnabled: boolean; alreadyJoined: boolean };
@@ -35,8 +49,18 @@ export async function createCloudRun(run: RunState, ownerName: string) {
   const supabase = getSupabase();
   if (!supabase) throw new Error("Supabase ist nicht konfiguriert.");
   const user = await ensureAnonymousUser();
-  const hostMember = run.members?.find((member) => member.role === "host");
-  const normalized = normalizeRun({ ...run, members: run.members?.map((member) => member === hostMember ? { ...member, participantId: user.id } : member) }) ?? run;
+  const sourceHostMember = run.members?.find((member) => member.role === "host");
+  const hostPlayer = run.players.find((player) => player.id === sourceHostMember?.playerId) ?? run.players[0];
+  if (!hostPlayer) throw new Error("Der Run hat keinen Host-Spieler.");
+  const playerCount = Math.min(4, Math.max(2, Number(run.playerCount) || 2)) as 2 | 3 | 4;
+  const hostMember = { id: sourceHostMember?.id ?? `member_${crypto.randomUUID().slice(0, 8)}`, participantId: user.id, displayName: ownerName || sourceHostMember?.displayName || hostPlayer.name || "Host", role: "host" as const, playerId: hostPlayer.id, color: hostPlayer.color, active: true, joinedAt: sourceHostMember?.joinedAt ?? new Date().toISOString() };
+  const normalized = normalizeRun({
+    ...run,
+    playerCount,
+    players: [{ ...hostPlayer, active: true }],
+    members: [hostMember],
+    playerSlots: Array.from({ length: playerCount }, (_, index) => ({ id: run.playerSlots?.[index]?.id ?? `slot_${index + 1}`, position: index + 1, ...(index === 0 ? { playerId: hostPlayer.id, memberId: hostMember.id } : {}) })),
+  }) ?? run;
   const { error: runError } = await supabase.from("runs").insert({
     id: normalized.id,
     invite_code: normalized.inviteCode,
@@ -85,7 +109,13 @@ export async function loadCloudRun(id: string) {
   await ensureAnonymousUser();
   const { data, error } = await supabase.from("runs").select("state").eq("id", id).maybeSingle();
   if (error) throw error;
-  return normalizeRun((data?.state ?? null) as RunState | null);
+  const raw = (data?.state ?? null) as RunState | null;
+  const normalized = normalizeRun(raw);
+  if (raw && normalized && JSON.stringify(raw) !== JSON.stringify(normalized)) {
+    // Spectators may read but cannot update; a failed best-effort repair must not block loading.
+    await saveCloudRun(normalized).catch((repairError) => console.warn("Cloud-State konnte nicht automatisch repariert werden.", repairError));
+  }
+  return normalized;
 }
 
 export async function saveCloudRun(run: RunState) {
@@ -118,15 +148,67 @@ export async function leaveCloudRun(runId: string) {
   if (error) throw error;
 }
 
-export function subscribeToCloudRun(id: string, onRun: (run: RunState) => void) {
+export type DeleteRunResult = { status: "deleted" | "already_deleted" };
+
+export async function deleteCloudRun(runId: string): Promise<DeleteRunResult> {
+  const supabase = getSupabase();
+  if (!supabase) throw new Error("Supabase ist nicht konfiguriert.");
+  await ensureAnonymousUser();
+  const { error } = await supabase.rpc("delete_run", { target_run: runId });
+  if (error) {
+    if (isAlreadyDeletedError(error)) return { status: "already_deleted" };
+    throw error;
+  }
+  return { status: "deleted" };
+}
+
+export function subscribeToCloudRun(id: string, onRun: (run: RunState) => void, onDeleted: () => void) {
   const supabase = getSupabase();
   if (!supabase) return () => {};
   const channel = supabase
     .channel(`run:${id}`)
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "runs", filter: `id=eq.${id}` }, (payload) => {
-      const state = normalizeRun((payload.new as { state?: RunState }).state);
-      if (state) onRun(state);
+      const raw = (payload.new as { state?: RunState }).state;
+      const state = normalizeRun(raw);
+      if (state) {
+        onRun(state);
+        if (raw && JSON.stringify(raw) !== JSON.stringify(state)) void saveCloudRun(state).catch(console.error);
+      }
     })
-    .subscribe();
+    .on("postgres_changes", { event: "DELETE", schema: "public", table: "runs" }, (payload) => {
+      if ((payload.old as { id?: string }).id === id) onDeleted();
+    })
+    .subscribe((status) => {
+      if (status !== "SUBSCRIBED") return;
+      void loadCloudRun(id).then((state) => state ? onRun(state) : onDeleted()).catch(() => undefined);
+    });
   return () => { void supabase.removeChannel(channel); };
+}
+
+export function subscribeToMembership(runId: string, onMembership: (membership: CloudMembership | null) => void) {
+  const supabase = getSupabase();
+  if (!supabase) return () => {};
+  let stopped = false;
+  let channel: RealtimeChannel | null = null;
+
+  void ensureAnonymousUser().then((user) => {
+    if (stopped) return;
+    const validate = () => void getCloudMembership(runId).then(onMembership).catch(() => undefined);
+    channel = supabase
+      .channel(`membership:${runId}:${user.id}`)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "run_members", filter: `run_id=eq.${runId}` }, (payload) => {
+        const member = payload.new as { run_id?: string; user_id?: string; player_id?: string | null; display_name?: string; role?: RunMemberRole; active?: boolean };
+        if (member.user_id === user.id) onMembership({ runId, userId: user.id, playerId: member.player_id ?? null, displayName: member.display_name ?? "", role: member.role ?? "player", active: member.active === true });
+      })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "run_members" }, (payload) => {
+        const member = payload.old as { run_id?: string; user_id?: string };
+        if (member.run_id === runId && member.user_id === user.id) onMembership(null);
+      })
+      .subscribe((status) => { if (status === "SUBSCRIBED") validate(); });
+  }).catch(() => undefined);
+
+  return () => {
+    stopped = true;
+    if (channel) void supabase.removeChannel(channel);
+  };
 }

@@ -44,6 +44,19 @@ Neue Runs werden bei gültiger Konfiguration zuerst in Supabase angelegt. Erst d
 
 Nach einem Update von einer früheren Version `supabase/migrations/fixed-player-slots.sql` im SQL Editor ausführen. Die nicht-destruktive Migration ergänzt die Rollen `host`, `player` und `spectator`, feste Slots sowie die RPCs für Vorschau, Join, Entfernen, Host-Transfer und Verlassen.
 
+Danach die inkrementellen Migrationen `supabase/migrations/fix-slot-occupancy-preview.sql` und `supabase/migrations/fix-membership-realtime.sql` ausführen. Letztere erlaubt einem Nutzer weiterhin ausschließlich das Lesen seines eigenen inaktiven Membership-Datensatzes, damit ein Kick zuverlässig per Realtime erkannt wird.
+
+## Tests
+
+```bash
+npm run typecheck
+npm run test:unit
+npm run test:e2e
+npm run test:all
+```
+
+Unit- und lokale Integrationstests benötigen keine Cloud-Zugangsdaten. Browser-/Supabase-E2E-Tests dürfen ausschließlich ein separates Testprojekt über `TEST_SUPABASE_URL` und `TEST_SUPABASE_PUBLISHABLE_KEY` verwenden. Fehlen diese Werte, wird der E2E-Schritt ausdrücklich übersprungen; die produktiven `NEXT_PUBLIC_*`-Werte werden niemals als Ersatz verwendet.
+
 Die MVP-RLS verhindert Schreibzugriffe von Zuschauern und schützt die Mitgliederverwaltung durch Host-geprüfte RPCs. Player-Updates am gemeinsamen JSON-Run-State werden zusätzlich in den App-Handlern eingeschränkt; für eine vollständig feldgenaue serverseitige Autorisierung sollte der JSON-State später in getrennte normalisierte Tabellen aufgeteilt werden.
 
 Alte Runs mit unterschiedlichen Statuswerten innerhalb desselben SoulLinks werden beim Laden sicher vereinheitlicht. Dabei gilt die Priorität `dead > box > team`: Ein totes Mitglied setzt den gesamten Link auf `dead`; gemischte Team-/Box-Gruppen werden vorsichtshalber in die Box verschoben.

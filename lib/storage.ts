@@ -18,12 +18,30 @@ export function normalizeRun(run: RunState | null | undefined): RunState | null 
   if (!run) return null;
 
   const next = { ...run };
+  const placeholderPlayerIds = new Set(
+    (run.members ?? [])
+      .filter((member) => {
+        if (member.role === "host" || !member.playerId || !member.participantId.startsWith("local_slot_")) return false;
+        return !run.pokemon.some((pokemon) => pokemon.playerId === member.playerId)
+          && !run.encounters.some((encounter) => encounter.playerId === member.playerId);
+      })
+      .map((member) => member.playerId!),
+  );
 
-  next.players = run.players.map((player, index) => ({ ...player, color: player.color ?? PLAYER_COLORS[index % PLAYER_COLORS.length], active: player.active !== false }));
+  next.players = run.players.map((player, index) => ({ ...player, color: player.color ?? PLAYER_COLORS[index % PLAYER_COLORS.length], active: placeholderPlayerIds.has(player.id) ? false : player.active !== false }));
   const activePlayers = next.players.filter((player) => player.active !== false);
   const normalizedPlayerCount = Math.min(4, Math.max(2, Number(run.playerCount) || activePlayers.length || 2)) as RunPlayerCount;
   next.playerCount = normalizedPlayerCount;
-  next.playerSlots = Array.from({ length: normalizedPlayerCount }, (_, index) => run.playerSlots?.[index] ?? { id: `slot_${index + 1}`, position: index + 1, playerId: activePlayers[index]?.id, memberId: run.members?.find((member) => member.playerId === activePlayers[index]?.id && member.active)?.id });
+  next.playerSlots = Array.from({ length: normalizedPlayerCount }, (_, index) => {
+    const existingSlot = run.playerSlots?.[index];
+    if (existingSlot) {
+      if (!existingSlot.playerId || !placeholderPlayerIds.has(existingSlot.playerId)) return existingSlot;
+      const { playerId: _playerId, memberId: _memberId, ...freeSlot } = existingSlot;
+      return freeSlot;
+    }
+    const player = activePlayers[index];
+    return { id: `slot_${index + 1}`, position: index + 1, playerId: player?.id, memberId: run.members?.find((member) => member.playerId === player?.id && member.active)?.id };
+  });
   next.runStatus = run.runStatus ?? (isPlatinum(run.game) && run.badges >= platinumProgress.length ? "finished" : "active");
 
   const legacyMembers = run.players.map((player, index) => ({
@@ -36,7 +54,7 @@ export function normalizeRun(run: RunState | null | undefined): RunState | null 
     active: player.active !== false,
     joinedAt: new Date(0).toISOString(),
   }));
-  next.members = (run.members?.length ? run.members : legacyMembers).map((member) => ({ ...member, color: member.color ?? next.players.find((player) => player.id === member.playerId)?.color }));
+  next.members = (run.members?.length ? run.members : legacyMembers).map((member) => ({ ...member, active: member.playerId && placeholderPlayerIds.has(member.playerId) ? false : member.active, color: member.color ?? next.players.find((player) => player.id === member.playerId)?.color }));
   next.soulLinkEnabled = run.soulLinkEnabled ?? true;
 
   next.encounters = run.encounters.map((encounter) => ({
@@ -71,9 +89,11 @@ export function normalizeRun(run: RunState | null | undefined): RunState | null 
     next.badges = safeBadges;
 
     if (safeBadges >= platinumProgress.length) {
+      next.runStatus = "finished";
       next.currentBoss = "Pokémon Liga geschafft";
       next.levelCap = platinumProgress[platinumProgress.length - 1]?.levelCap ?? next.levelCap;
     } else {
+      next.runStatus = "active";
       const nextBoss = platinumProgress[safeBadges];
       next.currentBoss = nextBoss.name;
       next.levelCap = nextBoss.levelCap;

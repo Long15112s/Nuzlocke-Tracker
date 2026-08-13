@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getPokemonList, searchPokemon } from "@/lib/pokeapi";
+import { getPokemonDetails, getPokemonList, searchPokemon } from "@/lib/pokeapi";
 import type { PokemonApiSummary, PokemonSelection } from "@/lib/types";
 import PokemonSprite from "@/components/PokemonSprite";
 
@@ -23,6 +23,7 @@ export default function PokemonAutocomplete({
   const [open, setOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [options, setOptions] = useState<PokemonApiSummary[]>([]);
+  const sourceListRef = useRef<PokemonApiSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -35,6 +36,7 @@ export default function PokemonAutocomplete({
         const list = await getPokemonList();
         if (!mounted) return;
         setOptions(list);
+        sourceListRef.current = list;
         setIsLoaded(true);
       } catch {
         if (!mounted) return;
@@ -59,7 +61,7 @@ export default function PokemonAutocomplete({
 
     const handleSearch = async () => {
       try {
-        const matches = await searchPokemon(value, options.length > 0 ? options : undefined);
+        const matches = await searchPokemon(value, sourceListRef.current.length > 0 ? sourceListRef.current : undefined);
         setOptions(matches);
         setHighlightedIndex(0);
         setOpen(matches.length > 0);
@@ -87,37 +89,16 @@ export default function PokemonAutocomplete({
 
   const suggestions = useMemo(() => {
     if (!value.trim()) return [];
-    return options.filter((item) => item.name.toLowerCase().includes(value.trim().toLowerCase())).slice(0, 10);
+    return options.slice(0, 10);
   }, [options, value]);
 
   const chooseOption = async (option: PokemonApiSummary) => {
-    const nextValue = option.name;
+    const nextValue = option.displayName ?? option.name;
     onChange(nextValue);
     setOpen(false);
 
     if (onSelect) {
-      const details = await fetch(`https://pokeapi.co/api/v2/pokemon/${option.name}`)
-        .then(async (response) => {
-          if (!response.ok) return null;
-          const data = await response.json() as {
-            id?: number;
-            name?: string;
-            sprites?: { front_default?: string };
-            types?: Array<{ type?: { name?: string } }>;
-            abilities?: Array<{ ability?: { name?: string } }>;
-          };
-          if (!data?.name) return null;
-          return {
-            id: data.id,
-            name: data.name,
-            apiName: data.name,
-            displayName: data.name,
-            spriteUrl: data.sprites?.front_default ?? option.spriteUrl,
-            types: (data.types ?? []).map((entry) => entry.type?.name ?? "").filter(Boolean),
-            abilities: (data.abilities ?? []).map((entry) => entry.ability?.name ?? "").filter(Boolean),
-          } satisfies PokemonSelection;
-        })
-        .catch(() => null);
+      const details = await getPokemonDetails(option.name);
 
       if (details) {
         onSelect(details);
@@ -126,7 +107,7 @@ export default function PokemonAutocomplete({
           id: option.id,
           name: option.name,
           apiName: option.name,
-          displayName: option.name,
+          displayName: option.displayName ?? option.name,
           spriteUrl: option.spriteUrl,
           types: [],
           abilities: [],
@@ -200,7 +181,7 @@ export default function PokemonAutocomplete({
               }}
             >
               <PokemonSprite spriteUrl={option.spriteUrl} alt={option.name} size={32} />
-              <span>{option.name}</span>
+              <span><strong>{option.displayName ?? option.name}</strong><small>#{option.id ?? "—"}{option.displayName ? ` · ${option.name}` : ""}</small></span>
             </button>
           ))}
         </div>

@@ -1,7 +1,14 @@
 import type { PokemonApiSummary, PokemonSelection } from "./types";
+import pokemonDeData from "./data/pokemon-de.json";
 
-const POKEMON_LIST_CACHE_KEY = "nuzlink_pokemon_list_v1";
-const POKEMON_DETAIL_CACHE_KEY_PREFIX = "nuzlink_pokemon_detail_v1_";
+const POKEMON_LIST_CACHE_KEY = "nuzlink_pokemon_list_v2";
+const POKEMON_DETAIL_CACHE_KEY_PREFIX = "nuzlink_pokemon_detail_v2_";
+
+export type LocalizedPokemonIndexEntry = { id: number; apiName: string; displayName: string; englishName: string };
+export const platinumPokemon = pokemonDeData as LocalizedPokemonIndexEntry[];
+export const GAME_POKEDEX_LIMITS = { "Pokémon Platin": 493 } as const;
+export const GERMAN_POKEMON_NAMES = Object.fromEntries(platinumPokemon.map((pokemon) => [pokemon.apiName, pokemon.displayName])) as Record<string, string>;
+const pokemonByApiName = new Map(platinumPokemon.map((pokemon) => [pokemon.apiName, pokemon]));
 
 function getSpriteUrlFromId(id?: number) {
   if (!id) return undefined;
@@ -16,6 +23,10 @@ function parsePokemonIdFromUrl(url?: string) {
 
 function normalizePokemonName(name: string) {
   return name.trim().toLowerCase();
+}
+
+export function normalizePokemonSearch(value: string) {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("de").replace(/♀/g, " female ").replace(/♂/g, " male ").replace(/[^a-z0-9]+/g, "").trim();
 }
 
 function toDisplayName(name: string) {
@@ -41,23 +52,22 @@ export async function getPokemonList(): Promise<PokemonApiSummary[]> {
     if (cached) {
       try {
         const parsed = JSON.parse(cached) as PokemonApiSummary[];
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length === 493 && parsed.every((entry, index) => entry.id === index + 1 && entry.displayName && entry.englishName)) return parsed;
       } catch {
         // ignore broken cache and reload from API
       }
     }
   }
 
-  const payload = await fetchJson<{ results?: Array<{ name: string; url: string }> }>("https://pokeapi.co/api/v2/pokemon?limit=1025");
-  const list = (payload?.results ?? []).map((pokemon) => {
-    const id = parsePokemonIdFromUrl(pokemon.url);
-    return {
-      name: pokemon.name,
-      url: pokemon.url,
-      spriteUrl: getSpriteUrlFromId(id),
-      id,
-    } satisfies PokemonApiSummary;
-  });
+  const list = platinumPokemon.map((pokemon) => ({
+    id: pokemon.id,
+    name: pokemon.apiName,
+    apiName: pokemon.apiName,
+    englishName: pokemon.englishName,
+    displayName: pokemon.displayName,
+    url: `https://pokeapi.co/api/v2/pokemon/${pokemon.id}/`,
+    spriteUrl: getSpriteUrlFromId(pokemon.id),
+  } satisfies PokemonApiSummary));
 
   if (typeof window !== "undefined" && list.length > 0) {
     window.localStorage.setItem(POKEMON_LIST_CACHE_KEY, JSON.stringify(list));
@@ -67,15 +77,25 @@ export async function getPokemonList(): Promise<PokemonApiSummary[]> {
 }
 
 export async function searchPokemon(query: string, sourceList?: PokemonApiSummary[]): Promise<PokemonApiSummary[]> {
-  const normalized = query.trim().toLowerCase();
+  const normalized = normalizePokemonSearch(query);
   if (!normalized) return [];
 
   const list = sourceList ?? (await getPokemonList());
   return list
-    .filter((pokemon) => pokemon.name.toLowerCase().includes(normalized))
+    .filter((pokemon) => [pokemon.name, pokemon.apiName, pokemon.englishName, pokemon.displayName].some((name) => normalizePokemonSearch(name ?? "").includes(normalized)))
+    .sort((a, b) => {
+      const score = (pokemon: PokemonApiSummary) => {
+        const names = [pokemon.displayName, pokemon.englishName, pokemon.apiName, pokemon.name].map((name) => normalizePokemonSearch(name ?? ""));
+        if (names.some((name) => name === normalized)) return 0;
+        if (names.some((name) => name.startsWith(normalized))) return 1;
+        return 2;
+      };
+      return score(a) - score(b) || (a.id ?? Number.MAX_SAFE_INTEGER) - (b.id ?? Number.MAX_SAFE_INTEGER);
+    })
     .slice(0, 10)
     .map((pokemon) => ({
       ...pokemon,
+      displayName: pokemon.displayName ?? GERMAN_POKEMON_NAMES[pokemon.name],
       spriteUrl: pokemon.spriteUrl ?? getSpriteUrlFromId(pokemon.id),
     }));
 }
@@ -106,11 +126,13 @@ export async function getPokemonDetails(name: string): Promise<PokemonSelection 
 
   if (!payload?.name) return null;
 
+  const species = await fetchJson<{ names?: Array<{ name?: string; language?: { name?: string } }> }>(`https://pokeapi.co/api/v2/pokemon-species/${payload.id ?? payload.name}`);
+  const germanName = species?.names?.find((entry) => entry.language?.name === "de")?.name;
   const selection: PokemonSelection = {
     id: payload.id,
     name: payload.name,
     apiName: payload.name,
-    displayName: toDisplayName(payload.name),
+    displayName: germanName ?? GERMAN_POKEMON_NAMES[payload.name] ?? toDisplayName(payload.name),
     spriteUrl: payload.sprites?.front_default ?? getSpriteUrlFromId(payload.id),
     types: (payload.types ?? []).map((entry) => entry.type?.name ?? "").filter(Boolean),
     abilities: (payload.abilities ?? []).map((entry) => entry.ability?.name ?? "").filter(Boolean),
@@ -121,6 +143,10 @@ export async function getPokemonDetails(name: string): Promise<PokemonSelection 
   }
 
   return selection;
+}
+
+export function getPokemonDisplayName(value: { displayName?: string; species?: string; apiName?: string }) {
+  return value.displayName ?? (value.apiName ? pokemonByApiName.get(value.apiName)?.displayName : undefined) ?? value.species ?? value.apiName ?? "Pokémon";
 }
 
 export function buildPokemonSelectionFromName(name: string, fallback?: PokemonSelection): PokemonSelection | null {

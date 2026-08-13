@@ -5,11 +5,13 @@ import PokemonAutocomplete from "@/components/PokemonAutocomplete";
 import PokemonSprite from "@/components/PokemonSprite";
 import { clearRun, getLocalParticipantId, loadRun, saveRun } from "@/lib/storage";
 import { cloudEnabled, isSupabaseConfigured } from "@/lib/supabase";
-import { createCloudRun, getCloudParticipantId, joinCloudRun, leaveCloudRun, loadCloudRun, manageCloudMember, previewCloudRun, saveCloudRun, subscribeToCloudRun, type RunPreview } from "@/lib/cloud";
+import { createCloudRun, deleteCloudRun, getCloudMembership, getCloudParticipantId, joinCloudRun, leaveCloudRun, loadCloudRun, manageCloudMember, previewCloudRun, saveCloudRun, subscribeToCloudRun, subscribeToMembership, type RunPreview } from "@/lib/cloud";
 import type { EncounterStatus, PokemonSelection, PokemonStatus, RunMember, RunMemberRole, RunPlayerCount, RunState, SoulLinkState } from "@/lib/types";
-import { canAdvanceBoss, canEditEncounters, canEditPokemonOwnedBy, canManagePlayers, canManageRun, MAX_RUN_PLAYERS, MIN_RUN_PLAYERS } from "@/lib/permissions";
-import { getAutoBoss, isPlatinum, platinumEncounterLocations, platinumProgress } from "@/lib/gameData";
-import { getPokemonDetails } from "@/lib/pokeapi";
+import { canAdvanceBoss, canDeleteSoulLink, canEditEncounters, canEditPokemonOwnedBy, canManagePlayers, canManageRun, canRestoreSoulLink } from "@/lib/permissions";
+import { getAutoBoss, getPlatinumLocationLabel, isPlatinum, platinumEncounterLocations, platinumProgress } from "@/lib/gameData";
+import { getPokemonDetails, getPokemonDisplayName } from "@/lib/pokeapi";
+import { getEncounterGroupState, getOccupiedSlotCount, getTeamLimitViolation } from "@/lib/runLogic";
+import { getCloudErrorDetails, getDeleteRunErrorMessage } from "@/lib/cloudErrors";
 
 const encounterLabels: Record<EncounterStatus, string> = {
   caught: "Gefangen",
@@ -54,26 +56,21 @@ function Setup({ onCreate }: { onCreate: (run: RunState) => void | Promise<void>
   const [hostName, setHostName] = useState("Spieler 1");
   const [hostColor, setHostColor] = useState("#7dd3fc");
   const [playerCount, setPlayerCount] = useState<RunPlayerCount>(3);
-  const [slotNames, setSlotNames] = useState(["Spieler 1", "", ""]);
-  const [slotColors, setSlotColors] = useState(["#7dd3fc", "#86efac", "#c4b5fd"]);
   const [soulLinkEnabled, setSoulLinkEnabled] = useState(true);
   const [randomizer, setRandomizer] = useState(defaultRandomizer);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (step < 4) { setStep(step + 1); return; }
-    const cleanHostName = slotNames[0]?.trim() || hostName.trim();
+    const cleanHostName = hostName.trim();
     if (!cleanHostName) { setStep(2); return; }
 
     const selectedGame = game.trim() || "Pokémon";
     const automaticBoss = getAutoBoss(selectedGame, 0);
 
     const participantId = getLocalParticipantId();
-    const configuredSlots = Array.from({ length: playerCount }, (_, index) => ({ name: (slotNames[index] ?? "").trim(), color: slotColors[index] ?? ["#7dd3fc", "#86efac", "#c4b5fd", "#fb923c"][index] }));
-    const configuredPlayers = configuredSlots.map((slot, index) => slot.name ? { id: makeId("player"), name: slot.name, color: slot.color, active: true, index } : null);
-    const players = configuredPlayers.filter((player): player is NonNullable<typeof player> => player !== null).map(({ index: _index, ...player }) => player);
-    const members = configuredPlayers.filter((player): player is NonNullable<typeof player> => player !== null).map((player, index) => ({ id: makeId("member"), participantId: player.index === 0 ? participantId : `local_slot_${player.id}`, displayName: player.name, role: player.index === 0 ? "host" as const : "player" as const, playerId: player.id, color: player.color, active: true, joinedAt: new Date().toISOString(), index }));
-    const memberByPlayer = new Map(members.map((member) => [member.playerId, member]));
+    const hostPlayerId = makeId("player");
+    const hostMemberId = makeId("member");
     await onCreate({
       id: crypto.randomUUID(),
       inviteCode: makeCode(),
@@ -90,10 +87,10 @@ function Setup({ onCreate }: { onCreate: (run: RunState) => void | Promise<void>
         Math.max(1, cap),
 
       badges: 0,
-      players,
-      members: members.map(({ index: _index, ...member }) => member),
+      players: [{ id: hostPlayerId, name: cleanHostName, color: hostColor, active: true }],
+      members: [{ id: hostMemberId, participantId, displayName: cleanHostName, role: "host", playerId: hostPlayerId, color: hostColor, active: true, joinedAt: new Date().toISOString() }],
       playerCount,
-      playerSlots: Array.from({ length: playerCount }, (_, index) => { const player = configuredPlayers[index]; return { id: makeId("slot"), position: index + 1, playerId: player?.id, memberId: player ? memberByPlayer.get(player.id)?.id : undefined }; }),
+      playerSlots: Array.from({ length: playerCount }, (_, index) => index === 0 ? { id: makeId("slot"), position: 1, playerId: hostPlayerId, memberId: hostMemberId } : { id: makeId("slot"), position: index + 1 }),
       runStatus: "active",
       soulLinkEnabled,
       encounters: [],
@@ -119,10 +116,10 @@ function Setup({ onCreate }: { onCreate: (run: RunState) => void | Promise<void>
           {step === 1 && <div className="twoCols">
             <label>Run-Name<input value={name} onChange={(e) => setName(e.target.value)} /></label>
             <label>Spiel<input value={game} onChange={(e) => setGame(e.target.value)} /></label>
-            <label>Spieleranzahl<select value={playerCount} onChange={(e) => { const count = Number(e.target.value) as RunPlayerCount; setPlayerCount(count); setSlotNames((old) => Array.from({ length: count }, (_, index) => old[index] ?? "")); setSlotColors((old) => Array.from({ length: count }, (_, index) => old[index] ?? ["#7dd3fc", "#86efac", "#c4b5fd", "#fb923c"][index])); }}><option value={2}>2 Spieler</option><option value={3}>3 Spieler</option><option value={4}>4 Spieler</option></select></label>
+            <label>Spieleranzahl<select value={playerCount} onChange={(e) => setPlayerCount(Number(e.target.value) as RunPlayerCount)}><option value={2}>2 Spieler</option><option value={3}>3 Spieler</option><option value={4}>4 Spieler</option></select></label>
             <label className="checkCard"><input type="checkbox" checked={soulLinkEnabled} onChange={(e) => setSoulLinkEnabled(e.target.checked)} /><span>SoulLink aktiv</span></label>
           </div>}
-          {step === 2 && <div className="setupSlots">{Array.from({ length: playerCount }, (_, index) => <div className="setupSlot" key={index}><div><span>Spieler {index + 1}</span>{index === 0 && <strong>Host</strong>}</div><label>Name<input autoFocus={index === 0} value={slotNames[index] ?? ""} onChange={(e) => { const values = [...slotNames]; values[index] = e.target.value; setSlotNames(values); if (index === 0) setHostName(e.target.value); }} placeholder={index === 0 ? "Host-Name" : "Noch nicht beigetreten"} /></label><label>Akzentfarbe<input type="color" value={slotColors[index]} onChange={(e) => { const values = [...slotColors]; values[index] = e.target.value; setSlotColors(values); if (index === 0) setHostColor(e.target.value); }} /></label></div>)}</div>}
+          {step === 2 && <div className="setupHostStep"><div className="twoCols"><label>Host-Name<input autoFocus value={hostName} onChange={(e) => setHostName(e.target.value)} placeholder="Dein Name" /></label><label>Akzentfarbe<input type="color" value={hostColor} onChange={(e) => setHostColor(e.target.value)} /></label></div><div className="slotPreview"><p className="eyebrow">SPIELERPLÄTZE</p>{Array.from({ length: playerCount }, (_, index) => <div key={index}><span>{index + 1}.</span><strong>{index === 0 ? hostName || "Host" : "Noch nicht beigetreten"}</strong>{index === 0 ? <span className="memberBadge">♕ Host</span> : <small>Frei</small>}</div>)}</div></div>}
 
           {step === 3 && <div className="sectionBlock">
             <h2>Randomizer</h2>
@@ -140,7 +137,7 @@ function Setup({ onCreate }: { onCreate: (run: RunState) => void | Promise<void>
             </div>
           </div>}
 
-          {step === 4 && <div className="setupSummary"><div><span>Run</span><strong>{name}</strong></div><div><span>Spiel</span><strong>{game}</strong></div><div><span>Spielerplätze</span><strong>{playerCount}</strong></div><div><span>Host</span><strong>{slotNames[0]}</strong></div><div><span>Modus</span><strong>{soulLinkEnabled ? "SoulLink aktiv" : "Nuzlocke"}</strong></div></div>}
+          {step === 4 && <div className="setupSummary"><div><span>Run</span><strong>{name}</strong></div><div><span>Spiel</span><strong>{game}</strong></div><div><span>Spielerplätze</span><strong>1 / {playerCount} belegt</strong></div><div><span>Host</span><strong>{hostName}</strong></div><div><span>Modus</span><strong>{soulLinkEnabled ? "SoulLink aktiv" : "Nuzlocke"}</strong></div></div>}
 
           <div className="setupActions">{step > 1 && <button className="ghostButton" type="button" onClick={() => setStep(step - 1)}>Zurück</button>}<button className="primaryButton big" type="submit">{step === 4 ? "Run starten" : "Weiter"}</button></div>
         </form>
@@ -178,7 +175,9 @@ function createEncounterRow(): EncounterRow {
 }
 
 function EncounterForm({ run, setRun, readOnly = false, onEvent }: { run: RunState; setRun: (next: RunState) => void; readOnly?: boolean; onEvent?: (message: string) => void }) {
-  const activePlayers = run.players.filter((player) => player.active !== false);
+  const occupiedPlayerIds = new Set(run.playerSlots?.flatMap((slot) => slot.playerId ? [slot.playerId] : []) ?? []);
+  const activePlayers = run.players.filter((player) => player.active !== false && (!run.playerSlots || occupiedPlayerIds.has(player.id)));
+  const allPlayerSlotsOccupied = (run.playerSlots?.filter((slot) => slot.playerId && activePlayers.some((player) => player.id === slot.playerId)).length ?? activePlayers.length) === (run.playerCount ?? activePlayers.length);
   const [location, setLocation] = useState("");
   const [customLocation, setCustomLocation] = useState("");
   const [showLocationWarning, setShowLocationWarning] = useState(false);
@@ -208,7 +207,7 @@ function EncounterForm({ run, setRun, readOnly = false, onEvent }: { run: RunSta
 
   const saveEncounter = () => {
     if (readOnly) return;
-    if (activePlayers.length !== (run.playerCount ?? activePlayers.length)) { setSlotWarning("Nicht alle Spielerplätze sind belegt."); return; }
+    if (!allPlayerSlotsOccupied) { setSlotWarning("Noch nicht alle Spieler sind beigetreten."); return; }
     if (!actualLocation) return;
     const now = new Date().toISOString();
     const encounterGroupId = makeId("group");
@@ -233,9 +232,7 @@ function EncounterForm({ run, setRun, readOnly = false, onEvent }: { run: RunSta
       };
     });
     const caught = entries.filter((entry) => entry.status === "caught");
-    const hasLostEncounter = entries.some((entry) => entry.status === "defeated" || entry.status === "fled");
-    const allCaught = entries.length > 0 && entries.every((entry) => entry.status === "caught");
-    const soulLinkState: SoulLinkState = hasLostEncounter ? "extinguished" : allCaught ? "active" : "pending";
+    const soulLinkState: SoulLinkState = getEncounterGroupState(entries.map((entry) => entry.status));
     const soulLinkId = run.soulLinkEnabled !== false ? makeId("link") : undefined;
     const nextSoulLinkNumber = Math.max(0, ...run.soulLinks.map((link, index) => link.displayNumber ?? index + 1)) + 1;
     const newPokemon = (run.soulLinkEnabled === false || soulLinkState === "active") ? caught.map((entry) => ({
@@ -274,7 +271,7 @@ function EncounterForm({ run, setRun, readOnly = false, onEvent }: { run: RunSta
     e.preventDefault();
     if (readOnly) return;
     if (!actualLocation) return;
-    if (activePlayers.length !== (run.playerCount ?? activePlayers.length)) { setSlotWarning("Nicht alle Spielerplätze sind belegt."); return; }
+    if (!allPlayerSlotsOccupied) { setSlotWarning("Noch nicht alle Spieler sind beigetreten."); return; }
     if (locationAlreadyUsed) {
       setShowLocationWarning(true);
       return;
@@ -288,7 +285,7 @@ function EncounterForm({ run, setRun, readOnly = false, onEvent }: { run: RunSta
       <div className="sectionTitleRow">
         <div><p className="eyebrow">NEUER ENCOUNTER</p><h2>Route / Gebiet erfassen</h2></div>
         <div className="locationPicker">
-          {isPlatinum(run.game) ? <><input className="locationInput" list="platinum-locations" value={location} onChange={(e) => { setLocation(e.target.value); setShowLocationWarning(false); }} placeholder="Ort suchen oder auswählen" /><datalist id="platinum-locations">{platinumEncounterLocations.map((place) => <option key={place} value={place} label={`${place}${usedLocations.has(place.toLocaleLowerCase("de")) ? " ✓" : ""}`} />)}<option value="Anderer Ort…" /></datalist></> : <input className="locationInput" value={location} onChange={(e) => { setLocation(e.target.value); setShowLocationWarning(false); }} placeholder="z. B. Route 204" />}
+          {isPlatinum(run.game) ? <><input className="locationInput" list="platinum-locations" value={location} onChange={(e) => { setLocation(e.target.value); setShowLocationWarning(false); }} placeholder="Ort suchen oder auswählen" /><datalist id="platinum-locations">{platinumEncounterLocations.map((place) => <option key={place.id} value={place.label} label={`${place.label}${usedLocations.has(place.label.toLocaleLowerCase("de")) ? " ✓" : ""}`} />)}<option value="Anderer Ort…" /></datalist></> : <input className="locationInput" value={location} onChange={(e) => { setLocation(e.target.value); setShowLocationWarning(false); }} placeholder="z. B. Route 204" />}
           {location === "Anderer Ort…" && <input className="locationInput" autoFocus value={customLocation} onChange={(e) => { setCustomLocation(e.target.value); setShowLocationWarning(false); }} placeholder="Eigenen Ort eingeben" />}
           {locationAlreadyUsed && !showLocationWarning && <span className="locationUsedHint">Für diesen Ort existiert bereits ein Encounter.</span>}
         </div>
@@ -338,7 +335,7 @@ function EncounterForm({ run, setRun, readOnly = false, onEvent }: { run: RunSta
   );
 }
 
-function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; setRun: (next: RunState) => void; cloudMode: boolean; currentMember: RunMember | null }) {
+function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline }: { run: RunState; setRun: (next: RunState) => void; cloudMode: boolean; currentMember: RunMember | null; onDeleteOnline: () => Promise<void> }) {
   type DashboardTab = "overview" | "encounters" | "pokemon" | "boss" | "settings" | "notes";
   type DashboardEvent = { id: string; message: string; timestamp: string; type?: "boss-defeated" | "system"; bossIndex?: number };
 
@@ -353,12 +350,20 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
   const [showSoulLinkInfo, setShowSoulLinkInfo] = useState(false);
   const [showTeamManager, setShowTeamManager] = useState(false);
   const [pokemonActionError, setPokemonActionError] = useState("");
+  const [deleteRunError, setDeleteRunError] = useState("");
+  const [deleteRunProcessing, setDeleteRunProcessing] = useState(false);
+  const [deletingSoulLinkId, setDeletingSoulLinkId] = useState<string | null>(null);
+  const soulLinkMutationRef = useRef(false);
+  const deleteRunProcessingRef = useRef(false);
   const deathUpdatingRef = useRef(false);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string>(run.players[0]?.id ?? "");
   const [events, setEvents] = useState<DashboardEvent[]>([
     { id: makeId("event"), message: "SoulLink Mode aktiv: Verknüpfte Pokémon teilen dasselbe Schicksal.", timestamp: new Date().toISOString(), type: "system" },
   ]);
   const spectatorMode = currentMember?.role === "spectator";
+  const occupiedSlots = getOccupiedSlotCount(run);
+  const totalPlayerSlots = run.playerCount ?? run.playerSlots?.length ?? Math.max(occupiedSlots, 2);
+  const freePlayerSlots = Math.max(0, totalPlayerSlots - occupiedSlots);
 
   const deaths = run.pokemon.filter((p) => p.status === "dead").length;
   const caught = run.encounters.filter((e) => e.status === "caught").length;
@@ -378,6 +383,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
       setSelectedPlayerId(run.players[0]?.id ?? "");
     }
   }, [run.players, selectedPlayerId]);
+
 
   useEffect(() => {
     bossUpdatingRef.current = false;
@@ -423,6 +429,34 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
     const index = run.soulLinks.findIndex((link) => link.id === id);
     return index >= 0 ? run.soulLinks[index].displayNumber ?? index + 1 : null;
   };
+  const pokemonLabel = (pokemon: { displayName?: string; species?: string; apiName?: string }) => getPokemonDisplayName(pokemon);
+
+  const deleteSoulLink = (linkId: string) => {
+    if (!canDeleteSoulLink(currentMember) || soulLinkMutationRef.current) return;
+    const members = run.pokemon.filter((pokemon) => pokemon.soulLinkId === linkId);
+    if (members.some((pokemon) => pokemon.status === "team")) {
+      setPokemonActionError("Dieser SoulLink befindet sich noch im Team. Verschiebe ihn zuerst in die Box.");
+      setDeletingSoulLinkId(null);
+      return;
+    }
+    const link = run.soulLinks.find((entry) => entry.id === linkId);
+    if (!link || link.deletedAt) return;
+    soulLinkMutationRef.current = true;
+    setRun({ ...run, soulLinks: run.soulLinks.map((entry) => entry.id === linkId ? { ...entry, deletedAt: new Date().toISOString(), deletedBy: currentMember?.participantId } : entry) });
+    appendEvent(`SoulLink #${getSoulLinkNumber(linkId) ?? "—"} wurde gelöscht.`);
+    setDeletingSoulLinkId(null);
+    queueMicrotask(() => { soulLinkMutationRef.current = false; });
+  };
+
+  const restoreSoulLink = (linkId: string) => {
+    if (!canRestoreSoulLink(currentMember) || soulLinkMutationRef.current) return;
+    const link = run.soulLinks.find((entry) => entry.id === linkId);
+    if (!link?.deletedAt) return;
+    soulLinkMutationRef.current = true;
+    setRun({ ...run, soulLinks: run.soulLinks.map((entry) => entry.id === linkId ? { ...entry, deletedAt: undefined, deletedBy: undefined } : entry) });
+    appendEvent(`SoulLink #${getSoulLinkNumber(linkId) ?? "—"} wurde wiederhergestellt.`);
+    queueMicrotask(() => { soulLinkMutationRef.current = false; });
+  };
 
   const openPokemonDialog = (id: string) => {
     const target = run.pokemon.find((p) => p.id === id);
@@ -455,14 +489,11 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
     }
 
     if (status === "team") {
-      for (const player of run.players) {
-        const unaffectedTeamCount = run.pokemon.filter((p) => p.playerId === player.id && p.status === "team" && !affectedIds.has(p.id)).length;
-        const incomingCount = affected.filter((p) => p.playerId === player.id).length;
-        if (unaffectedTeamCount + incomingCount > 6) {
-          setPokemonDialogError(`Spieler ${player.name} hätte dadurch mehr als 6 Pokémon im Team.`);
-          setPokemonActionError(`${player.name} hätte dadurch mehr als 6 Pokémon im Team.`);
-          return false;
-        }
+      const violatingPlayer = getTeamLimitViolation(run, affectedIds);
+      if (violatingPlayer) {
+        setPokemonDialogError(`Spieler ${violatingPlayer} hätte dadurch mehr als 6 Pokémon im Team.`);
+        setPokemonActionError(`${violatingPlayer} hätte dadurch mehr als 6 Pokémon im Team.`);
+        return false;
       }
     }
 
@@ -479,8 +510,8 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
     setPokemonActionError("");
 
     if (status === "dead") {
-      if (linkedGroupId) appendEvent(`SoulLink #${getSoulLinkNumber(linkedGroupId) ?? "—"} ist gestorben. ${affected.map((p) => p.species).join(", ")} wurden auf Tot gesetzt.`);
-      else appendEvent(`${target.nickname || target.species} ist gestorben.`);
+      if (linkedGroupId) appendEvent(`SoulLink #${getSoulLinkNumber(linkedGroupId) ?? "—"} ist gestorben. ${affected.map(pokemonLabel).join(", ")} wurden auf Tot gesetzt.`);
+      else appendEvent(`${target.nickname || pokemonLabel(target)} ist gestorben.`);
     }
     return true;
   };
@@ -573,6 +604,21 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
     clearRun(); window.history.replaceState({}, "", "/"); location.reload();
   };
 
+  const permanentlyDeleteOnlineRun = async () => {
+    if (!cloudMode || !canManageRun(currentMember) || deleteRunProcessingRef.current) return;
+    if (!window.confirm("Diesen Run wirklich dauerhaft löschen?\nAlle Spieler, Encounter, Pokémon und SoulLinks dieses Runs werden aus Supabase gelöscht. Diese Aktion kann nicht rückgängig gemacht werden.")) return;
+    deleteRunProcessingRef.current = true;
+    setDeleteRunProcessing(true);
+    setDeleteRunError("");
+    try {
+      await onDeleteOnline();
+    } catch (error) {
+      setDeleteRunError(getDeleteRunErrorMessage(error, process.env.NODE_ENV === "development"));
+      deleteRunProcessingRef.current = false;
+      setDeleteRunProcessing(false);
+    }
+  };
+
   const selectedPlayer = run.players.find((player) => player.id === selectedPlayerId) ?? run.players[0];
 
   const playerTeamCards = run.players.filter((player) => player.active !== false).map((player) => {
@@ -591,8 +637,10 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
   const soulLinkGroups = useMemo(() => {
     const groups = new Map<string, { id: string; members: typeof run.pokemon }>();
 
+    const visibleLinkIds = new Set(run.soulLinks.filter((link) => !link.deletedAt).map((link) => link.id));
     run.pokemon.forEach((pokemon) => {
       if (!pokemon.soulLinkId) return;
+      if (!visibleLinkIds.has(pokemon.soulLinkId)) return;
       const current = groups.get(pokemon.soulLinkId);
       if (current) {
         current.members.push(pokemon);
@@ -611,9 +659,10 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
   }, [run.pokemon, run.soulLinks]);
   const teamGroups = useMemo(() => {
     const sections: Record<PokemonStatus, typeof run.pokemon> = { team: [], box: [], dead: [] };
-    run.pokemon.forEach((pokemon) => sections[pokemon.status].push(pokemon));
+    const deletedLinkIds = new Set(run.soulLinks.filter((link) => link.deletedAt).map((link) => link.id));
+    run.pokemon.forEach((pokemon) => { if (!pokemon.soulLinkId || !deletedLinkIds.has(pokemon.soulLinkId)) sections[pokemon.status].push(pokemon); });
     return sections;
-  }, [run.pokemon]);
+  }, [run.pokemon, run.soulLinks]);
 
   const editableGroupMember = (members: typeof run.pokemon) => canManageRun(currentMember) ? members[0] : members.find((pokemon) => pokemon.playerId === currentMember?.playerId);
   const openGroupDeathDialog = (members: typeof run.pokemon) => {
@@ -639,7 +688,8 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
     }).reverse();
   }, [run.encounters, run.soulLinks]);
   const recentEncounterGroups = encounterGroups.slice(0, 3);
-  const extinguishedLinks = run.soulLinks.filter((link) => link.status === "extinguished").map((link) => ({ link, entries: link.encounterIds.map((id) => run.encounters.find((encounter) => encounter.id === id)).filter((entry) => entry !== undefined) }));
+  const extinguishedLinks = run.soulLinks.filter((link) => link.status === "extinguished" && !link.deletedAt).map((link) => ({ link, entries: link.encounterIds.map((id) => run.encounters.find((encounter) => encounter.id === id)).filter((entry) => entry !== undefined) }));
+  const deletedSoulLinks = run.soulLinks.filter((link) => link.deletedAt).map((link) => ({ link, entries: link.encounterIds.map((id) => run.encounters.find((encounter) => encounter.id === id)).filter((entry) => entry !== undefined), members: run.pokemon.filter((pokemon) => pokemon.soulLinkId === link.id) }));
   const bossPortrait = run.pokemon.find((pokemon) => pokemon.status === "team") ?? run.pokemon[0] ?? null;
   const editingPokemon = editingPokemonId ? run.pokemon.find((pokemon) => pokemon.id === editingPokemonId) ?? null : null;
   const editingOwner = editingPokemon ? run.players.find((player) => player.id === editingPokemon.playerId) ?? null : null;
@@ -717,8 +767,8 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
                   <div className="playerMonIdentity">
                     <PokemonSprite spriteUrl={pokemon.spriteUrl} alt={pokemon.species} size={32} />
                     <div>
-                      <strong>{pokemon.nickname || pokemon.species}</strong>
-                      <small>{pokemon.species} · Lv. {pokemon.level}</small>
+                      <strong>{pokemon.nickname || pokemonLabel(pokemon)}</strong>
+                      <small>{pokemonLabel(pokemon)} · Lv. {pokemon.level}</small>
                     </div>
                   </div>
                   <span className={`miniBadge ${pokemon.status}`}>{pokemon.status === "dead" ? "☠" : statusLabels[pokemon.status]}</span>
@@ -801,7 +851,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
                         <span>{player?.name}</span>
                         <div className="historyNameCell">
                           <PokemonSprite spriteUrl={encounter.spriteUrl} alt={encounter.species} size={28} />
-                          <strong>{encounter.species}{encounter.nickname ? ` „${encounter.nickname}“` : ""}</strong>
+                          <strong>{pokemonLabel(encounter)}{encounter.nickname ? ` „${encounter.nickname}“` : ""}</strong>
                         </div>
                         <span>Lv. {encounter.level}</span>
                         <span className={`status ${encounter.status}`}>{encounterLabels[encounter.status]}{linkState === "extinguished" && encounter.status === "caught" ? " · Ungültig" : ""}</span>
@@ -857,18 +907,18 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
                                   <PokemonSprite spriteUrl={pokemon.spriteUrl} alt={pokemon.species} size={34} />
                                   <div>
                                     <strong>{player?.name}</strong>
-                                    <span>{pokemon.nickname || pokemon.species}</span>
+                                    <span>{pokemon.nickname || pokemonLabel(pokemon)}</span>
                                   </div>
                                 </div>
                                 <div className="memberMeta right">
-                                  <strong>{pokemon.species}</strong>
+                                  <strong>{pokemonLabel(pokemon)}</strong>
                                   <span>Lv. {pokemon.level}</span>
                                 </div>
                               </div>
                             );
                           })}
                         </div>
-                        <div className="soulGroupActions"><button type="button" className="ghostButton" onClick={() => { const target = editableGroupMember(group.members); if (target) openPokemonDialog(target.id); }}>Bearbeiten</button>{status === "team" && <button type="button" className="ghostButton" onClick={() => { const target = editableGroupMember(group.members); if (target) updatePokemonStatus(target.id, "box"); }}>In Box verschieben</button>}{status === "box" && <button type="button" className="ghostButton" onClick={() => { const target = editableGroupMember(group.members); if (target) updatePokemonStatus(target.id, "team"); }}>Ins Team verschieben</button>}{status !== "dead" && <button type="button" className="dangerButton" onClick={() => openGroupDeathDialog(group.members)}>☠ Als tot markieren</button>}</div>
+                        <div className="soulGroupActions"><button type="button" className="ghostButton" onClick={() => { const target = editableGroupMember(group.members); if (target) openPokemonDialog(target.id); }}>Bearbeiten</button>{status === "team" && <button type="button" className="ghostButton" onClick={() => { const target = editableGroupMember(group.members); if (target) updatePokemonStatus(target.id, "box"); }}>In Box verschieben</button>}{status === "box" && <button type="button" className="ghostButton" onClick={() => { const target = editableGroupMember(group.members); if (target) updatePokemonStatus(target.id, "team"); }}>Ins Team verschieben</button>}{status !== "dead" && <button type="button" className="dangerButton" onClick={() => openGroupDeathDialog(group.members)}>☠ Als tot markieren</button>}{canDeleteSoulLink(currentMember) && <button type="button" className="textButton dangerText" onClick={() => { setPokemonActionError(""); if (status === "team") setPokemonActionError("Dieser SoulLink befindet sich noch im Team. Verschiebe ihn zuerst in die Box."); else setDeletingSoulLinkId(group.id); }}>Löschen</button>}</div>
                       </div>
                     ))}
 
@@ -879,12 +929,12 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
                           <div className="soloMeta">
                             <PokemonSprite spriteUrl={pokemon.spriteUrl} alt={pokemon.species} size={32} />
                             <div>
-                              <strong>{pokemon.nickname || pokemon.species}</strong>
+                              <strong>{pokemon.nickname || pokemonLabel(pokemon)}</strong>
                               <span>{player?.name}</span>
                             </div>
                           </div>
                           <div className="soloMeta right">
-                            <span>{pokemon.species}</span>
+                            <span>{pokemonLabel(pokemon)}</span>
                             <span>Lv. {pokemon.level}</span>
                             <button type="button" className="textButton" onClick={() => openPokemonDialog(pokemon.id)}>Bearbeiten</button>
                           </div>
@@ -897,7 +947,8 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
             </div>
           ))}
         </div>
-        {extinguishedLinks.length > 0 && <section className="extinguishedSection"><div className="sectionTitleRow"><div><p className="eyebrow">DOKUMENTATION</p><h2>Erloschene Links</h2></div><span className="countPill">{extinguishedLinks.length}</span></div><div className="extinguishedGrid">{extinguishedLinks.map(({ link, entries }) => <article className="extinguishedCard" key={link.id}><div className="activeLinkHeader"><strong>SoulLink #{link.displayNumber ?? getSoulLinkNumber(link.id)}</strong><span className="linkStateBadge extinguished">Erloschen</span></div><span>{entries[0]?.location ?? "Unbekannter Ort"}</span><div>{entries.map((entry) => { const owner = run.players.find((player) => player.id === entry.playerId); return <p key={entry.id}><strong>{entry.species}</strong> — {owner?.name ?? "Ehemaliger Spieler"} <small>{encounterLabels[entry.status]}</small></p>; })}</div><em>Grund: Encounter verloren</em></article>)}</div></section>}
+        {extinguishedLinks.length > 0 && <section className="extinguishedSection"><div className="sectionTitleRow"><div><p className="eyebrow">DOKUMENTATION</p><h2>Erloschene Links</h2></div><span className="countPill">{extinguishedLinks.length}</span></div><div className="extinguishedGrid">{extinguishedLinks.map(({ link, entries }) => <article className="extinguishedCard" key={link.id}><div className="activeLinkHeader"><strong>SoulLink #{link.displayNumber ?? getSoulLinkNumber(link.id)}</strong><span className="linkStateBadge extinguished">Erloschen</span></div><span>{getPlatinumLocationLabel(entries[0]?.location ?? "Unbekannter Ort")}</span><div>{entries.map((entry) => { const owner = run.players.find((player) => player.id === entry.playerId); return <p key={entry.id}><strong>{pokemonLabel(entry)}</strong> — {owner?.name ?? "Ehemaliger Spieler"} <small>{encounterLabels[entry.status]}</small></p>; })}</div><em>Grund: Encounter verloren</em>{canDeleteSoulLink(currentMember) && <button className="textButton dangerText" onClick={() => setDeletingSoulLinkId(link.id)}>Löschen</button>}</article>)}</div></section>}
+        {deletedSoulLinks.length > 0 && <section className="deletedLinksSection"><div className="sectionTitleRow"><div><p className="eyebrow">WIEDERHERSTELLUNG</p><h2>Gelöschte SoulLinks</h2></div><span className="countPill">{deletedSoulLinks.length}</span></div><div className="deletedLinkGrid">{deletedSoulLinks.map(({ link, entries, members }) => <article className="deletedLinkCard" key={link.id}><div><strong>SoulLink #{link.displayNumber ?? getSoulLinkNumber(link.id)}</strong><span>{getPlatinumLocationLabel(entries[0]?.location ?? members[0]?.location ?? "Unbekannter Ort")}</span></div><p>{(members.length ? members.map(pokemonLabel) : entries.map(pokemonLabel)).join(" ↔ ")}</p><small>Gelöscht: {link.deletedAt ? new Date(link.deletedAt).toLocaleString("de-DE") : "—"}</small>{canRestoreSoulLink(currentMember) && <button type="button" className="ghostButton" onClick={() => restoreSoulLink(link.id)}>Wiederherstellen</button>}</article>)}</div></section>}
       </section>
     );
   };
@@ -961,10 +1012,12 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
       </div>
 
       <div className="panel dangerZone">
-        <p className="eyebrow">LOKAL</p>
-        <h2>Run zurücksetzen</h2>
-        <p className="muted">Löscht diesen Prototyp-Run aus deinem Browser.</p>
-        <button className="dangerButton" disabled={!canManageRun(currentMember)} onClick={() => { if (!canManageRun(currentMember)) return; if (confirm("Run wirklich löschen?")) { clearRun(); location.reload(); } }}>Lokale Daten löschen</button>
+        <p className="eyebrow">{cloudMode ? "DATENVERWALTUNG" : "LOKAL"}</p>
+        <h2>{cloudMode ? "Run löschen" : "Lokalen Run löschen"}</h2>
+        <p className="muted">{cloudMode ? "Die lokale Kopie und der Online-Run werden getrennt verwaltet." : "Löscht diesen Run ausschließlich aus deinem Browser."}</p>
+        <button className="ghostButton" onClick={() => { if (confirm("Lokalen Run aus diesem Browser löschen? Der Online-Run bleibt bestehen.")) { clearRun(); window.history.replaceState({}, "", "/"); location.reload(); } }}>Lokalen Run löschen</button>
+        {deleteRunError && <div className="deleteRunError" role="alert"><strong>Löschen fehlgeschlagen</strong><span>{deleteRunError}</span></div>}
+        {cloudMode && canManageRun(currentMember) && <button className="dangerButton" disabled={deleteRunProcessing} onClick={permanentlyDeleteOnlineRun}>{deleteRunProcessing ? "Run wird gelöscht …" : "Online-Run endgültig löschen"}</button>}
         <button className="ghostButton" onClick={leaveRun}>Run verlassen</button>
       </div>
     </section>
@@ -995,7 +1048,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
         <div className="topHeaderActions">
           <span className="codePill">Run-Code {run.inviteCode}</span>
           <button className="ghostButton" onClick={copyLink}>{copied ? "Kopiert ✓" : "Einladungslink kopieren"}</button>
-          <span className="playerHeaderLabel">{run.players.length} Spieler</span>
+          <span className="playerHeaderLabel">{occupiedSlots} / {totalPlayerSlots} Spieler</span>
           <div className="avatarStack">
             {run.players.filter((player) => player.active !== false).map((player) => (
               <span key={player.id} className="avatar" style={{ background: playerAccent[player.id] }} title={player.name}>{player.name.slice(0, 2).toUpperCase()}</span>
@@ -1034,7 +1087,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
         <div className="sidebarSection">
           <div className="sectionTopline">
             <h3>Spieler</h3>
-            <button className="textButton" onClick={copyLink}>{run.players.filter((player) => player.active !== false).length >= (run.playerCount ?? MAX_RUN_PLAYERS) ? "Alle Spieler beigetreten" : copied ? "Link kopiert ✓" : "Offene Plätze einladen"}</button>
+            <button className="textButton" onClick={copyLink}>{freePlayerSlots === 0 ? "Alle Spieler beigetreten" : copied ? "Link kopiert ✓" : freePlayerSlots === 1 ? "1 Platz frei" : `${freePlayerSlots} Plätze frei`}</button>
           </div>
 
           <div className="playerList">
@@ -1101,7 +1154,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
                   return (
                     <div key={encounter.id} className="encounterSummaryItem">
                       <PokemonSprite spriteUrl={encounter.spriteUrl} alt={encounter.species} size={38} />
-                      <div><span>{player?.name}</span><strong>{encounter.species}</strong><small>Lv. {encounter.level}</small></div>
+                      <div><span>{player?.name}</span><strong>{pokemonLabel(encounter)}</strong><small>Lv. {encounter.level}</small></div>
                       <em className={`status ${encounter.status}`}>{encounter.status === "caught" ? "Gefangen" : encounter.status === "defeated" ? "Verloren" : encounterLabels[encounter.status]}</em>
                     </div>
                   );
@@ -1131,7 +1184,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
                     {group.members.map((member, index) => (
                       <div key={member.id} className="activeLinkName">
                         <PokemonSprite spriteUrl={member.spriteUrl} alt={member.species} size={32} />
-                        <span>{member.nickname || member.species}</span>
+                        <span>{member.nickname || pokemonLabel(member)}</span>
                         {index < group.members.length - 1 && <span className="arrow">↔</span>}
                       </div>
                     ))}
@@ -1149,21 +1202,23 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
 
       {showSoulLinkInfo && <div className="dialogBackdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowSoulLinkInfo(false); }}><section className="pokemonDialog soulLinkInfoDialog" role="dialog" aria-modal="true" aria-labelledby="soullink-info-title"><header className="pokemonDialogHeader"><div><p className="eyebrow">SOULLINK MODE</p><h2 id="soullink-info-title">Was ist ein SoulLink?</h2></div><button type="button" className="dialogClose" onClick={() => setShowSoulLinkInfo(false)} aria-label="Dialog schließen">×</button></header><p>Pokémon, die beim selben Encounter von verschiedenen Spielern gefangen werden, gehören zu einer gemeinsamen SoulLink-Gruppe.</p><div className="soulLinkExample"><span><strong>Max</strong>Garchomp</span><i>↔</i><span><strong>Leon</strong>Magikarp</span><i>↔</i><span><strong>Anna</strong>Regice</span></div><strong>Diese Pokémon teilen dasselbe Schicksal.</strong><section className="soulLinkRules"><p className="eyebrow">REGELN</p><ul><li>Ein Link wird nur aktiv, wenn alle teilnehmenden Spieler ihr Pokémon fangen.</li><li>Wird ein Pokémon besiegt oder flieht, erlischt der gesamte SoulLink. Auch bereits gefangene Pokémon dürfen dann nicht verwendet werden.</li><li>Ein Dupe/Reroll lässt den SoulLink nicht erlöschen und gilt nicht als finales Ergebnis.</li><li>Team- und Boxwechsel gelten immer für alle verbundenen Pokémon.</li><li>Stirbt ein Pokémon später im Run, gilt der aktive SoulLink als tot.</li><li>Ein Spieler darf maximal 6 Pokémon gleichzeitig im Team haben.</li></ul></section><footer className="pokemonDialogFooter"><button type="button" className="primaryButton" onClick={() => setShowSoulLinkInfo(false)}>Verstanden</button></footer></section></div>}
 
+      {deletingSoulLinkId && (() => { const link = run.soulLinks.find((entry) => entry.id === deletingSoulLinkId); const members = run.pokemon.filter((pokemon) => pokemon.soulLinkId === deletingSoulLinkId); const encounters = link?.encounterIds.map((id) => run.encounters.find((entry) => entry.id === id)).filter((entry) => entry !== undefined) ?? []; return <div className="dialogBackdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeletingSoulLinkId(null); }}><section className="pokemonDialog compactDialog" role="dialog" aria-modal="true"><header className="pokemonDialogHeader"><div><p className="eyebrow">SOULLINK LÖSCHEN</p><h2>SoulLink #{link?.displayNumber ?? getSoulLinkNumber(deletingSoulLinkId)} wirklich löschen?</h2></div><button type="button" className="dialogClose" onClick={() => setDeletingSoulLinkId(null)}>×</button></header><div className="dialogMemberList">{(members.length ? members : encounters).map((entry) => { const owner = run.players.find((player) => player.id === entry.playerId); return <div className="dialogMember" key={entry.id}><PokemonSprite spriteUrl={entry.spriteUrl} alt={pokemonLabel(entry)} size={38} /><div><strong>{pokemonLabel(entry)}</strong><span>{owner?.name ?? "Ehemaliger Spieler"}</span></div></div>; })}</div><p className="muted">Der Link wird aus den aktiven Ansichten entfernt. Er kann vom Host später wiederhergestellt werden.</p><footer className="pokemonDialogFooter"><button type="button" className="ghostButton" onClick={() => setDeletingSoulLinkId(null)}>Abbrechen</button><button type="button" className="dangerButton" onClick={() => deleteSoulLink(deletingSoulLinkId)}>SoulLink löschen</button></footer></section></div>; })()}
+
       {editingPokemon && pokemonDraft && (
         <div className="dialogBackdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closePokemonDialog(); }}>
           <section className="pokemonDialog" role="dialog" aria-modal="true" aria-labelledby="pokemon-dialog-title">
             <header className="pokemonDialogHeader">
               <div className="pokemonDialogIdentity">
                 <div className="dialogSprite"><PokemonSprite spriteUrl={editingPokemon.spriteUrl} alt={editingPokemon.species} size={72} /></div>
-                <div><p className="eyebrow">POKÉMON-DETAILS</p><h2 id="pokemon-dialog-title">{editingPokemon.species}</h2><span>{editingOwner?.name ?? "—"} · {editingPokemon.location || "—"}</span></div>
+                <div><p className="eyebrow">POKÉMON-DETAILS</p><h2 id="pokemon-dialog-title">{pokemonLabel(editingPokemon)}</h2><span>{editingOwner?.name ?? "—"} · {getPlatinumLocationLabel(editingPokemon.location) || "—"}</span></div>
               </div>
               <button type="button" className="dialogClose" onClick={closePokemonDialog} aria-label="Dialog schließen">×</button>
             </header>
 
             <div className="pokemonFacts">
-              <div><span>Spezies</span><strong>{editingPokemon.species || "—"}</strong></div>
+              <div><span>Spezies</span><strong>{pokemonLabel(editingPokemon) || "—"}</strong></div>
               <div><span>Besitzer</span><strong>{editingOwner?.name ?? "—"}</strong></div>
-              <div><span>Fangort</span><strong>{editingPokemon.location || "—"}</strong></div>
+              <div><span>Fangort</span><strong>{getPlatinumLocationLabel(editingPokemon.location) || "—"}</strong></div>
               <div><span>SoulLink</span><strong>{editingPokemon.soulLinkId ? `#${getSoulLinkNumber(editingPokemon.soulLinkId) ?? "—"}` : "—"}</strong></div>
             </div>
 
@@ -1182,7 +1237,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
                 <div className="dialogMemberList">
                   {editingSoulLinkMembers.map((member, index) => {
                     const owner = run.players.find((player) => player.id === member.playerId);
-                    return <div key={member.id} className="dialogMember">{index > 0 && <span className="dialogLinkArrow">↔</span>}<PokemonSprite spriteUrl={member.spriteUrl} alt={member.species} size={38} /><div><strong>{member.nickname || member.species}</strong><span>{member.species} — {owner?.name ?? "—"}</span></div></div>;
+                    return <div key={member.id} className="dialogMember">{index > 0 && <span className="dialogLinkArrow">↔</span>}<PokemonSprite spriteUrl={member.spriteUrl} alt={pokemonLabel(member)} size={38} /><div><strong>{member.nickname || pokemonLabel(member)}</strong><span>{pokemonLabel(member)} — {owner?.name ?? "—"}</span></div></div>;
                   })}
                 </div>
               </section>
@@ -1192,7 +1247,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember }: { run: RunState; s
               <div className="deathConfirmation">
                 <strong>{editingPokemon.soulLinkId ? `SoulLink #${getSoulLinkNumber(editingPokemon.soulLinkId) ?? "—"} als tot markieren?` : `${editingPokemon.nickname || editingPokemon.species} als tot markieren?`}</strong>
                 <p>Wenn ein Pokémon stirbt, gelten alle verbundenen Pokémon als tot. Betroffen:</p>
-                <div>{(editingSoulLinkMembers.length > 0 ? editingSoulLinkMembers : [editingPokemon]).map((member) => { const owner = run.players.find((player) => player.id === member.playerId); return <span key={member.id}>{member.species} – {owner?.name ?? "—"}</span>; })}</div>
+                <div>{(editingSoulLinkMembers.length > 0 ? editingSoulLinkMembers : [editingPokemon]).map((member) => { const owner = run.players.find((player) => player.id === member.playerId); return <span key={member.id}>{pokemonLabel(member)} – {owner?.name ?? "—"}</span>; })}</div>
                 <p>Alle Pokémon werden in den Friedhof verschoben.</p>
               </div>
             )}
@@ -1238,7 +1293,20 @@ export default function Home() {
   const [joinCode, setJoinCode] = useState<string | null>(null);
   const [joinAccepted, setJoinAccepted] = useState(false);
   const [participantId, setParticipantId] = useState("");
+  const [exitNotice, setExitNotice] = useState<{ kind: "kicked" | "deleted"; runName: string } | null>(null);
   const lastRemote = useRef("");
+  const deletingRunRef = useRef(false);
+  const pendingCloudSaveRef = useRef<number | null>(null);
+
+  const leaveCloudDashboard = (kind: "kicked" | "deleted", runName: string) => {
+    if (deletingRunRef.current && kind === "deleted") return;
+    clearRun();
+    lastRemote.current = "";
+    setCloudMode(false);
+    setRun(null);
+    setExitNotice({ kind, runName });
+    window.history.replaceState({}, "", "/");
+  };
 
   useEffect(() => {
     const localParticipantId = getLocalParticipantId();
@@ -1251,10 +1319,20 @@ export default function Home() {
     const matchingCached = rawMatchingCached && !isSupabaseConfigured && !rawMatchingCached.members?.some((member) => member.participantId === localParticipantId)
       ? { ...rawMatchingCached, members: rawMatchingCached.members?.map((member) => member.role === "host" ? { ...member, participantId: localParticipantId } : member) }
       : rawMatchingCached;
-    setRun(matchingCached ?? null);
-    setHydrated(true);
     if (matchingCached && isSupabaseConfigured) {
-      loadCloudRun(matchingCached.id).then((remote) => {
+      getCloudMembership(matchingCached.id).then((membership) => {
+        if (membership && !membership.active) {
+          leaveCloudDashboard("kicked", matchingCached.name);
+          return null;
+        }
+        if (!membership) {
+          return previewCloudRun(matchingCached.inviteCode).then((preview) => {
+            leaveCloudDashboard(preview ? "kicked" : "deleted", matchingCached.name);
+            return null;
+          });
+        }
+        return loadCloudRun(matchingCached.id);
+      }).then((remote) => {
         if (remote) {
           const normalizedRemote = remote;
           lastRemote.current = JSON.stringify(normalizedRemote);
@@ -1262,34 +1340,67 @@ export default function Home() {
           setCloudMode(true);
           getCloudParticipantId().then(setParticipantId).catch(() => undefined);
         }
-      }).catch(() => setCloudMode(false));
+      }).catch(() => setCloudMode(false)).finally(() => setHydrated(true));
+    } else {
+      setRun(matchingCached ?? null);
+      setHydrated(true);
     }
   }, []);
 
   useEffect(() => {
     if (!hydrated || !run) return;
     saveRun(run);
-    if (!cloudMode) return;
+    if (!cloudMode || deletingRunRef.current) return;
     const serialized = JSON.stringify(run);
     if (serialized === lastRemote.current) return;
     const timer = window.setTimeout(() => {
+      pendingCloudSaveRef.current = null;
+      if (deletingRunRef.current) return;
       saveCloudRun(run).then(() => { lastRemote.current = serialized; }).catch(console.error);
     }, 180);
-    return () => window.clearTimeout(timer);
+    pendingCloudSaveRef.current = timer;
+    return () => {
+      window.clearTimeout(timer);
+      if (pendingCloudSaveRef.current === timer) pendingCloudSaveRef.current = null;
+    };
   }, [run, hydrated, cloudMode]);
 
   useEffect(() => {
     if (!run || !cloudMode) return;
     return subscribeToCloudRun(run.id, (remote) => {
+      if (deletingRunRef.current) return;
       const serialized = JSON.stringify(remote);
       if (serialized === lastRemote.current) return;
       lastRemote.current = serialized;
       setRun(remote);
       saveRun(remote);
-    });
+    }, () => { if (!deletingRunRef.current) leaveCloudDashboard("deleted", run.name); });
   }, [run?.id, cloudMode]);
 
+  useEffect(() => {
+    if (!run || !cloudMode || !participantId) return;
+    return subscribeToMembership(run.id, (membership) => {
+      if (deletingRunRef.current) return;
+      if (membership && !membership.active) {
+        leaveCloudDashboard("kicked", run.name);
+        return;
+      }
+      if (!membership) {
+        void previewCloudRun(run.inviteCode).then((preview) => leaveCloudDashboard(preview ? "kicked" : "deleted", run.name)).catch(() => undefined);
+        return;
+      }
+      void loadCloudRun(run.id).then((remote) => {
+        if (!remote) return;
+        const serialized = JSON.stringify(remote);
+        lastRemote.current = serialized;
+        setRun(remote);
+        saveRun(remote);
+      }).catch(() => undefined);
+    });
+  }, [run?.id, cloudMode, participantId]);
+
   const createRun = async (next: RunState) => {
+    deletingRunRef.current = false;
     const normalized = next;
     if (isSupabaseConfigured) {
       const online = await createCloudRun(normalized, normalized.players[0]?.name ?? "Host");
@@ -1323,8 +1434,36 @@ export default function Home() {
   };
 
   if (!hydrated) return <main className="loading">Nuzlink wird geladen …</main>;
+  if (exitNotice) return <main className="setupShell"><section className="setupCard joinCard"><div className="brandRow"><div className="logo">NL</div><div><p className="eyebrow">MULTIPLAYER</p><h1>{exitNotice.kind === "kicked" ? "Du wurdest aus diesem Run entfernt." : "Dieser Run wurde vom Host gelöscht."}</h1></div></div><p className="lead">{exitNotice.runName}</p><button className="primaryButton big" onClick={() => setExitNotice(null)}>Zur Startseite</button></section></main>;
   if (joinCode && !joinAccepted) return <JoinRun code={joinCode} cachedRun={run} onJoin={joinRun} onDashboard={() => { setJoinAccepted(true); window.history.replaceState({}, "", "/"); setJoinCode(null); }} onCancel={cancelJoin} />;
   if (!run) return <Setup onCreate={createRun} />;
   const currentMember = run.members?.find((member) => member.active && member.participantId === participantId) ?? (run.members?.length === 1 ? run.members[0] : null);
-  return <Dashboard run={run} setRun={setRun} cloudMode={cloudMode} currentMember={currentMember} />;
+  const deleteOnlineRun = async () => {
+    if (deletingRunRef.current) return;
+    deletingRunRef.current = true;
+    if (pendingCloudSaveRef.current !== null) {
+      window.clearTimeout(pendingCloudSaveRef.current);
+      pendingCloudSaveRef.current = null;
+    }
+    const deletingRunId = run.id;
+    try {
+      await deleteCloudRun(deletingRunId);
+    } catch (error) {
+      deletingRunRef.current = false;
+      if (process.env.NODE_ENV === "development") {
+        const { code, message, details, hint } = getCloudErrorDetails(error);
+        console.error("Online-Run konnte nicht gelöscht werden", { code, message, details, hint });
+      }
+      throw error;
+    }
+    clearRun();
+    lastRemote.current = "";
+    setCloudMode(false);
+    setRun(null);
+    setExitNotice(null);
+    setJoinCode(null);
+    setJoinAccepted(false);
+    window.history.replaceState({}, "", "/");
+  };
+  return <Dashboard run={run} setRun={setRun} cloudMode={cloudMode} currentMember={currentMember} onDeleteOnline={deleteOnlineRun} />;
 }

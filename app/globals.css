@@ -433,6 +433,17 @@ h3 { font-size: 15px; }
   .statCard strong { font-size: 28px; }
 }
 .errorText { color: var(--danger); margin: 0; font-size: 13px; }
+.deleteRunError { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid rgba(251,113,133,.32); border-radius: 12px; background: rgba(251,113,133,.08); color: #fecdd3; font-size: 12px; line-height: 1.4; }
+.deleteRunError strong { color: #fda4af; }
+.deletedLinksSection { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.deletedLinkGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.deletedLinkCard { display: grid; gap: 8px; padding: 12px; border: 1px dashed rgba(148,163,184,.22); border-radius: 14px; background: rgba(15,21,27,.54); color: var(--muted); }
+.deletedLinkCard > div { display: flex; justify-content: space-between; gap: 8px; }
+.deletedLinkCard strong { color: var(--text); }
+.deletedLinkCard p, .deletedLinkCard small { margin: 0; }
+.compactDialog { max-width: 520px; }
+.autocompleteItem > span { display: grid; text-align: left; }
+.autocompleteItem > span small { color: var(--muted); font-size: 10px; text-transform: capitalize; }
 .joinCard { max-width: 620px; }
 code { background: #0e1216; border: 1px solid var(--line); border-radius: 6px; padding: 2px 5px; }
 button:disabled { opacity: .6; cursor: wait; }
@@ -448,6 +459,10 @@ button:disabled { opacity: .6; cursor: wait; }
 .appTopHeader .logo::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #eaf7ff; border: 3px solid #172331; position: absolute; inset: 0; margin: auto; }
 .topHeaderActions { flex-wrap: wrap; justify-content: flex-end; }
 .playerHeaderLabel { color: var(--muted); font-size: 12px; font-weight: 750; }
+.setupHostStep { display: grid; gap: 18px; }
+.slotPreview { display: grid; gap: 7px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(15, 21, 27, .68); }
+.slotPreview > div { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 32px; padding: 5px 8px; border-radius: 9px; background: rgba(255,255,255,.02); }
+.slotPreview > div > span:first-child, .slotPreview small { color: var(--muted); }
 .codePill { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--primary); background: rgba(125,211,252,.06); }
 .iconButton { display: grid; place-items: center; padding: 0; height: 38px; width: 38px; flex-basis: 38px; font-size: 16px; background: rgba(255,255,255,.025); }
 .dashboardShell { grid-template-columns: 232px minmax(0, 1fr) 304px; gap: 14px; margin-top: 14px; }
