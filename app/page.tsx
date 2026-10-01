@@ -1,5 +1,8 @@
 "use client";
 
+import DeathCounter, { DeathCause } from "@/components/DeathCounter";
+import TypeChart from "@/components/TypeChart";
+import EncounterActions from "@/components/EncounterActions";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import PokemonAutocomplete from "@/components/PokemonAutocomplete";
 import PokemonSprite from "@/components/PokemonSprite";
@@ -10,9 +13,9 @@ import { cloudEnabled, isSupabaseConfigured } from "@/lib/supabase";
 import { createCloudRun, deleteCloudRun, getCloudMembership, getCloudParticipantId, issueRecoveryCode, joinCloudRun, leaveCloudRun, loadCloudRun, manageCloudMember, previewCloudRun, recoverCloudMember, rotateRecoveryCode, saveCloudRun, subscribeToCloudRun, subscribeToMembership, type RunPreview } from "@/lib/cloud";
 import type { EncounterStatus, PokemonSelection, PokemonStatus, RunMember, RunMemberRole, RunPlayerCount, RunState, SoulLinkState } from "@/lib/types";
 import { canAdvanceBoss, canDeleteSoulLink, canEditEncounters, canEditPokemonOwnedBy, canManagePlayers, canManageRun, canRestoreSoulLink, canUndoSoulLinkDeath } from "@/lib/permissions";
-import { getAutoBoss, getPlatinumLocationLabel, isPlatinum, platinumEncounterLocations, platinumProgress } from "@/lib/gameData";
+import { getAutoBoss, getPlatinumLocationLabel, isPlatinum, platinumProgress } from "@/lib/gameData";
 import { getPokemonDetails, getPokemonDisplayName } from "@/lib/pokeapi";
-import { getEncounterGroupState, getOccupiedSlotCount, getSoulLinkDeathPreviousStatus, getSoulLinkDeathUndoTarget, getTeamLimitViolation, validateQuickEncounter } from "@/lib/runLogic";
+import { getAvailablePlatinumEncounterLocations, getDeadSoulLinks, getSoulLinkDeathMembers, getDeathCauseLabel, undoSoulLinkDeath as applySoulLinkDeathUndo, createPokemonDetailsDraft, selectPokemonDraftSpecies, type PokemonDetailsDraft, updatePokemonDetails, getUsedEncounterLocations, getEncounterGroupState, getOccupiedSlotCount, getSoulLinkDeathUndoTarget, getTeamLimitViolation, validateQuickEncounter } from "@/lib/runLogic";
 import { getCloudErrorDetails, getDeleteRunErrorMessage } from "@/lib/cloudErrors";
 
 const encounterLabels: Record<EncounterStatus, string> = {
@@ -219,14 +222,7 @@ function EncounterForm({ run, setRun, readOnly = false, onEvent }: { run: RunSta
   const lastLevelFor = (playerId: string) => [...run.encounters].reverse().find((encounter) => encounter.playerId === playerId)?.level ?? 1;
   const [rows, setRows] = useState<Record<string, EncounterRow>>(() => Object.fromEntries(activePlayers.map((p) => [p.id, createEncounterRow(lastLevelFor(p.id))])));
   const actualLocation = location === "Anderer Ort…" ? customLocation.trim() : location.trim();
-  const usedLocations = useMemo(() => {
-    const groups = new Map<string, typeof run.encounters>();
-    run.encounters.forEach((encounter) => {
-      const key = encounter.encounterGroupId ?? `legacy_${encounter.createdAt}_${encounter.location}`;
-      groups.set(key, [...(groups.get(key) ?? []), encounter]);
-    });
-    return new Set(Array.from(groups.values()).filter((entries) => entries.some((entry) => entry.status === "defeated" || entry.status === "fled") || (entries.length > 0 && entries.every((entry) => entry.status === "caught"))).map((entries) => entries[0].location.toLocaleLowerCase("de")));
-  }, [run.encounters]);
+  const usedLocations = useMemo(() => getUsedEncounterLocations(run), [run.encounters]);
   const locationAlreadyUsed = actualLocation ? usedLocations.has(actualLocation.toLocaleLowerCase("de")) : false;
 
   useEffect(() => {
@@ -294,6 +290,7 @@ function EncounterForm({ run, setRun, readOnly = false, onEvent }: { run: RunSta
     const nextSoulLinkNumber = Math.max(0, ...run.soulLinks.map((link, index) => link.displayNumber ?? index + 1)) + 1;
     const newPokemon = (run.soulLinkEnabled === false || soulLinkState === "active") ? caught.map((entry) => ({
       id: makeId("pkm"),
+      encounterId: entry.id,
       playerId: entry.playerId,
       species: entry.species,
       nickname: entry.nickname,
@@ -353,7 +350,7 @@ function EncounterForm({ run, setRun, readOnly = false, onEvent }: { run: RunSta
       <div className="sectionTitleRow">
         <div><p className="eyebrow">NEUER ENCOUNTER</p><h2>Route / Gebiet erfassen</h2></div>
         <div className="locationPicker">
-          {isPlatinum(run.game) ? <><input ref={locationRef} autoFocus className="locationInput" list="platinum-locations" value={location} onChange={(e) => { setLocation(e.target.value); setShowLocationWarning(false); setFieldErrors({}); }} placeholder="Ort suchen oder auswählen" aria-invalid={Boolean(fieldErrors.location)} /><datalist id="platinum-locations">{platinumEncounterLocations.map((place) => <option key={place.id} value={place.label} label={`${place.label}${usedLocations.has(place.label.toLocaleLowerCase("de")) ? " · bereits verwendet" : ""}`} />)}<option value="Anderer Ort…" /></datalist></> : <input ref={locationRef} autoFocus className="locationInput" value={location} onChange={(e) => { setLocation(e.target.value); setShowLocationWarning(false); setFieldErrors({}); }} placeholder="z. B. Route 204" />}
+          {isPlatinum(run.game) ? <><input ref={locationRef} autoFocus className="locationInput" list="platinum-locations" value={location} onChange={(e) => { setLocation(e.target.value); setShowLocationWarning(false); setFieldErrors({}); }} placeholder="Ort suchen oder auswählen" aria-invalid={Boolean(fieldErrors.location)} /><datalist id="platinum-locations">{getAvailablePlatinumEncounterLocations(run).map((place) => <option key={place.id} value={place.label} />)}<option value="Anderer Ort…" /></datalist></> : <input ref={locationRef} autoFocus className="locationInput" value={location} onChange={(e) => { setLocation(e.target.value); setShowLocationWarning(false); setFieldErrors({}); }} placeholder="z. B. Route 204" />}
           {location === "Anderer Ort…" && <input className="locationInput" autoFocus value={customLocation} onChange={(e) => { setCustomLocation(e.target.value); setShowLocationWarning(false); }} placeholder="Eigenen Ort eingeben" />}
           {locationAlreadyUsed && !showLocationWarning && <span className="locationUsedHint">Für diesen Ort existiert bereits ein Encounter.</span>}
           {fieldErrors.location && <span className="fieldError">{fieldErrors.location}</span>}
@@ -402,7 +399,7 @@ function EncounterForm({ run, setRun, readOnly = false, onEvent }: { run: RunSta
 }
 
 function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRecoveryCode }: { run: RunState; setRun: (next: RunState) => void; cloudMode: boolean; currentMember: RunMember | null; onDeleteOnline: () => Promise<void>; onRecoveryCode: (rotate: boolean) => Promise<void> }) {
-  type DashboardTab = "overview" | "encounters" | "pokemon" | "search" | "boss" | "settings" | "notes";
+  type DashboardTab = "overview" | "encounters" | "pokemon" | "search" | "types" | "boss" | "settings" | "notes";
   type DashboardEvent = { id: string; message: string; timestamp: string; type?: "boss-defeated" | "system"; bossIndex?: number };
 
   const [tab, setTab] = useState<DashboardTab>("overview");
@@ -412,7 +409,9 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
   const bossUpdatingRef = useRef(false);
   useEffect(() => { if (cloudMode) void getCloudMembership(run.id).then((member) => setRecoveryConfigured(Boolean(member?.recoveryConfigured))).catch(() => undefined); }, [cloudMode, run.id]);
   const [editingPokemonId, setEditingPokemonId] = useState<string | null>(null);
-  const [pokemonDraft, setPokemonDraft] = useState<{ nickname: string; level: number; ability: string; types: string; status: PokemonStatus } | null>(null);
+  const [pokemonDraft, setPokemonDraft] = useState<PokemonDetailsDraft | null>(null);
+  const [speciesLoading, setSpeciesLoading] = useState(false);
+  const pokemonSaveRef = useRef(false);
   const [pokemonDialogError, setPokemonDialogError] = useState("");
   const [confirmingDeath, setConfirmingDeath] = useState(false);
   const [showSoulLinkInfo, setShowSoulLinkInfo] = useState(false);
@@ -421,10 +420,10 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
   const [deleteRunError, setDeleteRunError] = useState("");
   const [deleteRunProcessing, setDeleteRunProcessing] = useState(false);
   const [deletingSoulLinkId, setDeletingSoulLinkId] = useState<string | null>(null);
+  const [choosingDeathPokemonIds, setChoosingDeathPokemonIds] = useState<string[] | null>(null);
   const [undoingDeathLinkId, setUndoingDeathLinkId] = useState<string | null>(null);
   const soulLinkMutationRef = useRef(false);
   const deleteRunProcessingRef = useRef(false);
-  const deathUpdatingRef = useRef(false);
   const [selectedPlayerId, setSelectedPlayerId] = useState<string>(run.players[0]?.id ?? "");
   const [events, setEvents] = useState<DashboardEvent[]>([
     { id: makeId("event"), message: "SoulLink Mode aktiv: Verknüpfte Pokémon teilen dasselbe Schicksal.", timestamp: new Date().toISOString(), type: "system" },
@@ -434,7 +433,9 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
   const totalPlayerSlots = run.playerCount ?? run.playerSlots?.length ?? Math.max(occupiedSlots, 2);
   const freePlayerSlots = Math.max(0, totalPlayerSlots - occupiedSlots);
 
-  const deaths = run.pokemon.filter((p) => p.status === "dead").length;
+  const deadSoulLinks = getDeadSoulLinks(run);
+  const hiddenDeadSoulLinkCount = deadSoulLinks.filter(link => link.deletedAt).length;
+  const deaths = deadSoulLinks.length;
   const caught = run.encounters.filter((e) => e.status === "caught").length;
   const activeBossProgress = isPlatinum(run.game) ? platinumProgress : null;
   const totalBosses = platinumProgress.length;
@@ -462,13 +463,14 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (showSoulLinkInfo) setShowSoulLinkInfo(false);
+      if (choosingDeathPokemonIds) setChoosingDeathPokemonIds(null);
+      else if (showSoulLinkInfo) setShowSoulLinkInfo(false);
       else if (showTeamManager) setShowTeamManager(false);
       else if (editingPokemonId) closePokemonDialog();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showSoulLinkInfo, showTeamManager, editingPokemonId]);
+  }, [choosingDeathPokemonIds, showSoulLinkInfo, showTeamManager, editingPokemonId]);
 
   const appendEvent = (message: string, options?: { type?: "boss-defeated" | "system"; bossIndex?: number }) => {
     const event = {
@@ -530,13 +532,8 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
     if (!canUndoSoulLinkDeath(currentMember) || soulLinkMutationRef.current) return;
     const link = run.soulLinks.find((entry) => entry.id === linkId);
     if (!link || link.status !== "dead" || link.deletedAt) return;
-    const target = getSoulLinkDeathUndoTarget(run, linkId, link.deathPreviousStatus);
     soulLinkMutationRef.current = true;
-    setRun({
-      ...run,
-      soulLinks: run.soulLinks.map((entry) => entry.id === linkId ? { ...entry, status: "active", deathPreviousStatus: undefined, diedAt: undefined, diedBy: undefined } : entry),
-      pokemon: run.pokemon.map((pokemon) => pokemon.soulLinkId === linkId ? { ...pokemon, status: target.status } : pokemon),
-    });
+    setRun(applySoulLinkDeathUndo(run, linkId, currentMember));
     appendEvent(`Tod von SoulLink #${getSoulLinkNumber(linkId) ?? "—"} wurde vom Host rückgängig gemacht.`);
     setUndoingDeathLinkId(null);
     queueMicrotask(() => { soulLinkMutationRef.current = false; });
@@ -546,79 +543,69 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
     const target = run.pokemon.find((p) => p.id === id);
     if (!target || !canEditPokemonOwnedBy(currentMember, target.playerId)) return;
     setEditingPokemonId(id);
-    setPokemonDraft({ nickname: target.nickname, level: target.level, ability: target.ability ?? "", types: target.types?.join(", ") ?? "", status: target.status });
+    setSpeciesLoading(false);
+    setPokemonDraft(createPokemonDetailsDraft(target, pokemonLabel(target), run));
     setPokemonDialogError("");
     setConfirmingDeath(false);
   };
 
   const closePokemonDialog = () => {
     setEditingPokemonId(null);
+    setSpeciesLoading(false);
     setPokemonDraft(null);
     setPokemonDialogError("");
     setConfirmingDeath(false);
   };
 
-  const updatePokemonStatus = (id: string, status: PokemonStatus, details?: { nickname: string; level: number; ability: string; types: string[] }) => {
+  const updatePokemonStatus = (id: string, status: PokemonStatus, details?: { nickname: string; level: number; ability: string; types: string[]; selection?: PokemonSelection; deathCausedByPlayerId?: string; undoDeath?: boolean }) => {
     const target = run.pokemon.find((p) => p.id === id);
     if (!target || !canEditPokemonOwnedBy(currentMember, target.playerId)) return false;
-
-    const linkedGroupId = target.soulLinkId;
-    const affected = linkedGroupId ? run.pokemon.filter((p) => p.soulLinkId === linkedGroupId) : [target];
-    const affectedIds = new Set(affected.map((p) => p.id));
-
-    if (status === "dead" && affected.every((pokemon) => pokemon.status === "dead")) return false;
-    if (status !== "dead" && affected.some((pokemon) => pokemon.status === "dead")) {
-      const message = "Tote SoulLinks können nicht über die normale Teamverwaltung wiederbelebt werden.";
+    try {
+      const next = updatePokemonDetails(run, id, { ...details, status }, currentMember);
+      setRun(next);
+      setPokemonActionError("");
+      if (status === "dead" && target.status !== "dead") {
+        const affected = target.soulLinkId ? next.pokemon.filter(p => p.soulLinkId === target.soulLinkId) : next.pokemon.filter(p => p.id === id);
+        if (target.soulLinkId) {
+          const causeId = next.soulLinks.find(l => l.id === target.soulLinkId)?.deathCausedByPlayerId;
+          const causePokemon = affected.find(p => p.playerId === causeId)!;
+          appendEvent(`SoulLink #${getSoulLinkNumber(target.soulLinkId) ?? "—"} ist gestorben – ${run.players.find(p => p.id === causeId)?.name ?? "Ehemaliger Spieler"} verlor ${pokemonLabel(causePokemon)}.`);
+        }
+        else appendEvent(`${target.nickname || pokemonLabel(affected[0])} ist gestorben.`);
+      }
+      return true;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Änderung fehlgeschlagen.";
       setPokemonDialogError(message); setPokemonActionError(message); return false;
     }
-
-    if (status === "team") {
-      const violatingPlayer = getTeamLimitViolation(run, affectedIds);
-      if (violatingPlayer) {
-        setPokemonDialogError(`Spieler ${violatingPlayer} hätte dadurch mehr als 6 Pokémon im Team.`);
-        setPokemonActionError(`${violatingPlayer} hätte dadurch mehr als 6 Pokémon im Team.`);
-        return false;
-      }
-    }
-
-    const deathPreviousStatus = linkedGroupId ? getSoulLinkDeathPreviousStatus(affected.map((pokemon) => pokemon.status)) : undefined;
-    setRun({
-      ...run,
-      soulLinks: linkedGroupId && status === "dead" ? run.soulLinks.map((link) => link.id === linkedGroupId ? { ...link, status: "dead", deathPreviousStatus, diedAt: new Date().toISOString(), diedBy: currentMember?.participantId } : link) : run.soulLinks,
-      pokemon: run.pokemon.map((p) => {
-        const nextStatus = affectedIds.has(p.id) ? status : p.status;
-        if (p.id === id && details) return { ...p, ...details, status: nextStatus };
-        if (affectedIds.has(p.id)) return { ...p, status: nextStatus };
-        return p;
-      }),
-    });
-    setPokemonActionError("");
-
-    if (status === "dead") {
-      if (linkedGroupId) appendEvent(`SoulLink #${getSoulLinkNumber(linkedGroupId) ?? "—"} ist gestorben. ${affected.map(pokemonLabel).join(", ")} wurden auf Tot gesetzt.`);
-      else appendEvent(`${target.nickname || pokemonLabel(target)} ist gestorben.`);
-    }
-    return true;
   };
 
   const savePokemonDraft = () => {
-    if (!editingPokemonId || !pokemonDraft) return;
+    if (!editingPokemonId || !pokemonDraft || speciesLoading || pokemonSaveRef.current) return;
     const target = run.pokemon.find((p) => p.id === editingPokemonId);
     if (!target) return;
-    if (pokemonDraft.status === "dead" && target.status !== "dead" && !confirmingDeath) {
-      setConfirmingDeath(true);
-      return;
+    if (!pokemonDraft.selection && pokemonDraft.speciesQuery !== pokemonLabel(target)) {
+      setPokemonDialogError("Bitte eine Spezies aus der Pokémon-Liste auswählen."); return;
     }
-    if (confirmingDeath && deathUpdatingRef.current) return;
-    if (confirmingDeath) deathUpdatingRef.current = true;
-    const saved = updatePokemonStatus(editingPokemonId, pokemonDraft.status, {
-      nickname: pokemonDraft.nickname.trim(),
-      level: Math.max(1, Number(pokemonDraft.level) || 1),
-      ability: pokemonDraft.ability.trim(),
-      types: pokemonDraft.types.split(",").map((type) => type.trim()).filter(Boolean),
-    });
-    if (saved) closePokemonDialog();
-    deathUpdatingRef.current = false;
+    if (pokemonDraft.status === "dead" && target.status !== "dead" && target.soulLinkId && !pokemonDraft.deathCausedByPlayerId) {
+      setPokemonDialogError("Bitte wähle aus, wessen Pokémon den Tod verursacht hat."); return;
+    }
+    if (pokemonDraft.status === "dead" && target.status !== "dead" && !confirmingDeath) {
+      setConfirmingDeath(true); return;
+    }
+    pokemonSaveRef.current = true;
+    try {
+      const saved = updatePokemonStatus(editingPokemonId, pokemonDraft.status, {
+        selection: pokemonDraft.selection,
+        deathCausedByPlayerId: pokemonDraft.status === "dead" && target.soulLinkId ? pokemonDraft.deathCausedByPlayerId : undefined,
+        undoDeath: target.status === "dead" && pokemonDraft.status !== "dead",
+        nickname: pokemonDraft.nickname.trim(),
+        level: Number(pokemonDraft.level),
+        ability: pokemonDraft.ability.trim(),
+        types: pokemonDraft.types.split(",").map((type) => type.trim()).filter(Boolean),
+      });
+      if (saved) closePokemonDialog();
+    } finally { queueMicrotask(() => { pokemonSaveRef.current = false; }); }
   };
 
   const handleBossDefeated = () => {
@@ -708,7 +695,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
 
   const playerTeamCards = run.players.filter((player) => player.active !== false).map((player) => {
     const team = run.pokemon.filter((p) => p.playerId === player.id && p.status === "team");
-    const dead = run.pokemon.filter((p) => p.playerId === player.id && p.status === "dead");
+    const dead = deadSoulLinks.filter(link => run.pokemon.some(p => p.soulLinkId === link.id && p.playerId === player.id) || run.encounters.some(e => link.encounterIds.includes(e.id) && e.playerId === player.id));
     const soulLinks = new Set(run.pokemon.filter((p) => p.playerId === player.id && p.soulLinkId).map((p) => p.soulLinkId));
 
     return {
@@ -735,10 +722,14 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
       groups.set(pokemon.soulLinkId, { id: pokemon.soulLinkId, members: [pokemon] });
     });
 
+    for (const link of getDeadSoulLinks(run)) {
+      if (!link.deletedAt && !groups.has(link.id)) groups.set(link.id, { id: link.id, members: [] });
+    }
+    const deadIds = new Set(getDeadSoulLinks(run).map(link => link.id));
     return Array.from(groups.values()).map((group) => ({
       id: group.id,
       members: [...group.members].sort((a, b) => a.species.localeCompare(b.species)),
-      status: group.members[0]?.status ?? "box",
+      status: deadIds.has(group.id) ? "dead" : group.members[0]?.status === "dead" ? "box" : group.members[0]?.status ?? "box",
       linkState: run.soulLinks.find((link) => link.id === group.id)?.status ?? "active",
     }));
   }, [run.pokemon, run.soulLinks]);
@@ -751,10 +742,15 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
 
   const editableGroupMember = (members: typeof run.pokemon) => canManageRun(currentMember) ? members[0] : members.find((pokemon) => pokemon.playerId === currentMember?.playerId);
   const openGroupDeathDialog = (members: typeof run.pokemon) => {
-    const target = editableGroupMember(members);
-    if (!target || members.every((pokemon) => pokemon.status === "dead")) return;
-    openPokemonDialog(target.id);
-    setPokemonDraft({ nickname: target.nickname, level: target.level, ability: target.ability ?? "", types: target.types?.join(", ") ?? "", status: "dead" });
+    if (!editableGroupMember(members) || members.every(p => p.status === "dead")) return;
+    setChoosingDeathPokemonIds(members.map(p => p.id));
+  };
+  const chooseDeathPokemon = (id: string) => {
+    const target = run.pokemon.find(p => p.id === id);
+    if (!target || target.status === "dead" || !canEditPokemonOwnedBy(currentMember, target.playerId)) return;
+    setChoosingDeathPokemonIds(null);
+    openPokemonDialog(id);
+    setPokemonDraft({ ...createPokemonDetailsDraft(target, pokemonLabel(target), run), status: "dead" });
     setConfirmingDeath(true);
   };
 
@@ -777,8 +773,9 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
   const deletedSoulLinks = run.soulLinks.filter((link) => link.deletedAt).map((link) => ({ link, entries: link.encounterIds.map((id) => run.encounters.find((encounter) => encounter.id === id)).filter((entry) => entry !== undefined), members: run.pokemon.filter((pokemon) => pokemon.soulLinkId === link.id) }));
   const bossPortrait = run.pokemon.find((pokemon) => pokemon.status === "team") ?? run.pokemon[0] ?? null;
   const editingPokemon = editingPokemonId ? run.pokemon.find((pokemon) => pokemon.id === editingPokemonId) ?? null : null;
+  const previewPokemon = editingPokemon && pokemonDraft?.selection ? { ...editingPokemon, ...pokemonDraft.selection, species: pokemonDraft.selection.displayName } : editingPokemon;
   const editingOwner = editingPokemon ? run.players.find((player) => player.id === editingPokemon.playerId) ?? null : null;
-  const editingSoulLinkMembers = editingPokemon?.soulLinkId ? run.pokemon.filter((pokemon) => pokemon.soulLinkId === editingPokemon.soulLinkId) : [];
+  const editingSoulLinkMembers = editingPokemon ? getSoulLinkDeathMembers(run, editingPokemon) : [];
 
   const renderOverview = () => (
     <>
@@ -863,7 +860,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
 
             <div className="playerCardFooter">
               <span>{team.length} Team</span>
-              <span>{deadCount} Tot</span>
+              <span>{deadCount} tote SoulLinks</span>
               <span>{soulLinkCount} SoulLinks</span>
             </div>
           </article>
@@ -940,6 +937,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
                         </div>
                         <span>Lv. {encounter.level}</span>
                         <span className={`status ${encounter.status}`}>{encounterLabels[encounter.status]}{linkState === "extinguished" && encounter.status === "caught" ? " · Ungültig" : ""}</span>
+                        <EncounterActions run={run} entry={encounter} member={currentMember} setRun={setRun} />
                       </div>
                     );
                   })}
@@ -969,11 +967,12 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
             <div key={status} className="statusSection">
               <div className="statusSectionHeader">
                 <h3>{status === "dead" ? "FRIEDHOF" : statusLabels[status].toUpperCase()}</h3>
-                <span>{teamGroups[status].length}</span>
+                <span>{status === "dead" ? deaths : teamGroups[status].length}</span>
               </div>
 
+              {status === "dead" && hiddenDeadSoulLinkCount > 0 && <p className="muted">Davon {hiddenDeadSoulLinkCount} ausgeblendet. Diese Links stehen unter ?Gelöschte SoulLinks? und zählen weiterhin als tot.</p>}
               <div className="soulGroupList">
-                {teamGroups[status].filter((entry) => entry.soulLinkId).length === 0 && teamGroups[status].filter((entry) => !entry.soulLinkId).length === 0 ? (
+                {soulLinkGroups.filter(group => group.status === status).length === 0 && teamGroups[status].filter((entry) => !entry.soulLinkId).length === 0 ? (
                   <p className="empty">{status === "team" ? "Noch keine Pokémon im Team." : status === "box" ? "Noch keine Pokémon in der Box." : "Zum Glück noch leer."}</p>
                 ) : (
                   <>
@@ -1003,10 +1002,12 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
                             );
                           })}
                         </div>
+                        {status === "dead" && <DeathCause run={run} linkId={group.id} member={currentMember} setRun={setRun} />}
                         <div className="soulGroupActions"><button type="button" className="ghostButton" onClick={() => { const target = editableGroupMember(group.members); if (target) openPokemonDialog(target.id); }}>Bearbeiten</button>{status === "team" && <button type="button" className="ghostButton" onClick={() => { const target = editableGroupMember(group.members); if (target) updatePokemonStatus(target.id, "box"); }}>In Box verschieben</button>}{status === "box" && <button type="button" className="ghostButton" onClick={() => { const target = editableGroupMember(group.members); if (target) updatePokemonStatus(target.id, "team"); }}>Ins Team verschieben</button>}{status !== "dead" && <button type="button" className="dangerButton" onClick={() => openGroupDeathDialog(group.members)}>☠ Als tot markieren</button>}{status === "dead" && canUndoSoulLinkDeath(currentMember) && <button type="button" className="ghostButton undoDeathButton" onClick={() => setUndoingDeathLinkId(group.id)}>Tod rückgängig machen</button>}{canDeleteSoulLink(currentMember) && <button type="button" className="textButton dangerText" onClick={() => { setPokemonActionError(""); if (status === "team") setPokemonActionError("Dieser SoulLink befindet sich noch im Team. Verschiebe ihn zuerst in die Box."); else setDeletingSoulLinkId(group.id); }}>Löschen</button>}</div>
                       </div>
                     ))}
 
+                    {status === "dead" && teamGroups.dead.some(p => !p.soulLinkId) && <p className="muted">Pokémon ohne SoulLink – nicht im SoulLink-Todeszähler enthalten</p>}
                     {teamGroups[status].filter((entry) => !entry.soulLinkId).map((pokemon) => {
                       const player = run.players.find((entry) => entry.id === pokemon.playerId);
                       return (
@@ -1033,7 +1034,7 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
           ))}
         </div>
         {extinguishedLinks.length > 0 && <section className="extinguishedSection"><div className="sectionTitleRow"><div><p className="eyebrow">DOKUMENTATION</p><h2>Erloschene Links</h2></div><span className="countPill">{extinguishedLinks.length}</span></div><div className="extinguishedGrid">{extinguishedLinks.map(({ link, entries }) => <article className="extinguishedCard" key={link.id}><div className="activeLinkHeader"><strong>SoulLink #{link.displayNumber ?? getSoulLinkNumber(link.id)}</strong><span className="linkStateBadge extinguished">Erloschen</span></div><span>{getPlatinumLocationLabel(entries[0]?.location ?? "Unbekannter Ort")}</span><div>{entries.map((entry) => { const owner = run.players.find((player) => player.id === entry.playerId); return <p key={entry.id}><strong>{pokemonLabel(entry)}</strong> — {owner?.name ?? "Ehemaliger Spieler"} <small>{encounterLabels[entry.status]}</small></p>; })}</div><em>Grund: Encounter verloren</em>{canDeleteSoulLink(currentMember) && <button className="textButton dangerText" onClick={() => setDeletingSoulLinkId(link.id)}>Löschen</button>}</article>)}</div></section>}
-        {deletedSoulLinks.length > 0 && <section className="deletedLinksSection"><div className="sectionTitleRow"><div><p className="eyebrow">WIEDERHERSTELLUNG</p><h2>Gelöschte SoulLinks</h2></div><span className="countPill">{deletedSoulLinks.length}</span></div><div className="deletedLinkGrid">{deletedSoulLinks.map(({ link, entries, members }) => <article className="deletedLinkCard" key={link.id}><div><strong>SoulLink #{link.displayNumber ?? getSoulLinkNumber(link.id)}</strong><span>{getPlatinumLocationLabel(entries[0]?.location ?? members[0]?.location ?? "Unbekannter Ort")}</span></div><p>{(members.length ? members.map(pokemonLabel) : entries.map(pokemonLabel)).join(" ↔ ")}</p><small>Gelöscht: {link.deletedAt ? new Date(link.deletedAt).toLocaleString("de-DE") : "—"}</small>{canRestoreSoulLink(currentMember) && <button type="button" className="ghostButton" onClick={() => restoreSoulLink(link.id)}>Wiederherstellen</button>}</article>)}</div></section>}
+        {deletedSoulLinks.length > 0 && <section className="deletedLinksSection"><div className="sectionTitleRow"><div><p className="eyebrow">WIEDERHERSTELLUNG</p><h2>Gelöschte SoulLinks</h2></div><span className="countPill">{deletedSoulLinks.length}</span></div><div className="deletedLinkGrid">{deletedSoulLinks.map(({ link, entries, members }) => <article className="deletedLinkCard" key={link.id}><div><strong>SoulLink #{link.displayNumber ?? getSoulLinkNumber(link.id)}</strong><span>{getPlatinumLocationLabel(entries[0]?.location ?? members[0]?.location ?? "Unbekannter Ort")}</span></div><p>{(members.length ? members.map(pokemonLabel) : entries.map(pokemonLabel)).join(" ↔ ")}</p>{link.status === "dead" && <DeathCause run={run} linkId={link.id} member={currentMember} setRun={setRun} />}<small>Gelöscht: {link.deletedAt ? new Date(link.deletedAt).toLocaleString("de-DE") : "—"}</small>{canRestoreSoulLink(currentMember) && <button type="button" className="ghostButton" onClick={() => restoreSoulLink(link.id)}>Wiederherstellen</button>}</article>)}</div></section>}
       </section>
     );
   };
@@ -1159,12 +1160,13 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
             ["encounters", "Encounters"],
             ["pokemon", "Teams & Friedhof"],
             ["search", "Pokémon-Suche"],
+            ["types", "Typentabelle"],
             ["boss", "Boss & Level Cap"],
             ["settings", "Run-Einstellungen"],
             ["notes", "Notizen"],
           ].map(([value, label]) => (
             <button key={value} className={tab === value ? "sideNavItem active" : "sideNavItem"} onClick={() => setTab(value as DashboardTab)}>
-              {label}
+              {value === "types" && <span aria-hidden="true">▦ </span>}{label}
             </button>
           ))}
         </nav>
@@ -1215,10 +1217,11 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
           <div className="statCard danger"><span>Tode</span><strong>{deaths}</strong></div>
         </section>
 
-        {tab === "overview" && renderOverview()}
+        {tab === "overview" && <><DeathCounter run={run} />{renderOverview()}</>}
         {tab === "encounters" && renderEncounters()}
         {tab === "pokemon" && renderPokemon()}
         {tab === "search" && <PokemonRunSearch run={run} />}
+        {tab === "types" && <TypeChart />}
         {tab === "boss" && renderBoss()}
         {tab === "settings" && renderSettings()}
         {tab === "notes" && renderNotes()}
@@ -1292,30 +1295,46 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
 
       {undoingDeathLinkId && (() => { const link = run.soulLinks.find((entry) => entry.id === undoingDeathLinkId); const target = getSoulLinkDeathUndoTarget(run, undoingDeathLinkId, link?.deathPreviousStatus); const legacy = !link?.deathPreviousStatus; return <div className="dialogBackdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setUndoingDeathLinkId(null); }}><section className="pokemonDialog compactDialog" role="dialog" aria-modal="true"><header className="pokemonDialogHeader"><div><p className="eyebrow">TOD KORRIGIEREN</p><h2>Tod von SoulLink #{link?.displayNumber ?? getSoulLinkNumber(undoingDeathLinkId)} wirklich rückgängig machen?</h2></div><button type="button" className="dialogClose" onClick={() => setUndoingDeathLinkId(null)}>×</button></header><p>Damit werden alle verbundenen Pokémon wieder in ihren Zustand vor dem Tod versetzt.</p><p className="muted">Nur verwenden, wenn der Tod versehentlich eingetragen wurde.</p>{legacy && <p className="dialogNotice">Der ursprüngliche Status ist bei diesem älteren Eintrag nicht gespeichert. Der SoulLink wird in die Box wiederhergestellt.</p>}{target.teamLimitBlocked && <p className="dialogNotice warning">Der SoulLink war vor dem Tod im Team, aber es sind nicht mehr genügend Teamplätze frei.</p>}<footer className="pokemonDialogFooter"><button type="button" className="ghostButton" onClick={() => setUndoingDeathLinkId(null)}>Abbrechen</button><button type="button" className="primaryButton" onClick={() => undoSoulLinkDeath(undoingDeathLinkId)}>{target.teamLimitBlocked ? "In Box wiederherstellen" : "Tod rückgängig machen"}</button></footer></section></div>; })()}
 
+      {choosingDeathPokemonIds && <div className="dialogBackdrop" role="presentation"><section className="pokemonDialog compactDialog" role="dialog" aria-modal="true" aria-labelledby="death-cause-choice-title"><header className="pokemonDialogHeader"><h2 id="death-cause-choice-title">Welches Pokémon ist gestorben?</h2><button type="button" className="dialogClose" aria-label="Dialog schließen" onClick={() => setChoosingDeathPokemonIds(null)}>×</button></header><div className="deathPokemonChoices">{choosingDeathPokemonIds.map(id => {
+        const pokemon = run.pokemon.find(p => p.id === id);
+        if (!pokemon) return null;
+        const owner = run.players.find(p => p.id === pokemon.playerId);
+        return <button type="button" className="ghostButton" key={id} disabled={pokemon.status === "dead" || !canEditPokemonOwnedBy(currentMember, pokemon.playerId)} onClick={() => chooseDeathPokemon(id)}><PokemonSprite spriteUrl={pokemon.spriteUrl} alt={pokemonLabel(pokemon)} size={34} />{pokemonLabel(pokemon)} – {owner?.name ?? "Ehemaliger Spieler"}</button>;
+      })}</div><footer className="pokemonDialogFooter"><button type="button" className="ghostButton" onClick={() => setChoosingDeathPokemonIds(null)}>Abbrechen</button></footer></section></div>}
       {editingPokemon && pokemonDraft && (
         <div className="dialogBackdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closePokemonDialog(); }}>
           <section className="pokemonDialog" role="dialog" aria-modal="true" aria-labelledby="pokemon-dialog-title">
             <header className="pokemonDialogHeader">
               <div className="pokemonDialogIdentity">
-                <div className="dialogSprite"><PokemonSprite spriteUrl={editingPokemon.spriteUrl} alt={editingPokemon.species} size={72} /></div>
-                <div><p className="eyebrow">POKÉMON-DETAILS</p><h2 id="pokemon-dialog-title">{pokemonLabel(editingPokemon)}</h2><span>{editingOwner?.name ?? "—"} · {getPlatinumLocationLabel(editingPokemon.location) || "—"}</span></div>
+                <div className="dialogSprite"><PokemonSprite spriteUrl={previewPokemon?.spriteUrl} alt={previewPokemon?.species ?? "Pokémon"} size={72} /></div>
+                <div><p className="eyebrow">POKÉMON-DETAILS</p><h2 id="pokemon-dialog-title">{previewPokemon ? pokemonLabel(previewPokemon) : "Pokémon"}</h2><span>{editingOwner?.name ?? "—"} · {getPlatinumLocationLabel(editingPokemon.location) || "—"}</span></div>
               </div>
               <button type="button" className="dialogClose" onClick={closePokemonDialog} aria-label="Dialog schließen">×</button>
             </header>
 
             <div className="pokemonFacts">
-              <div><span>Spezies</span><strong>{pokemonLabel(editingPokemon) || "—"}</strong></div>
+              <div><span>Spezies</span><strong>{previewPokemon ? pokemonLabel(previewPokemon) : "—"}</strong></div>
               <div><span>Besitzer</span><strong>{editingOwner?.name ?? "—"}</strong></div>
               <div><span>Fangort</span><strong>{getPlatinumLocationLabel(editingPokemon.location) || "—"}</strong></div>
               <div><span>SoulLink</span><strong>{editingPokemon.soulLinkId ? `#${getSoulLinkNumber(editingPokemon.soulLinkId) ?? "—"}` : "—"}</strong></div>
             </div>
 
+            {editingPokemon.status === "dead" && editingPokemon.soulLinkId && <p className="muted">Dieser SoulLink starb durch: {getDeathCauseLabel(run, editingPokemon.soulLinkId)}</p>}
             <div className="pokemonEditGrid">
+              <div className="dialogFullWidth"><PokemonAutocomplete label="Spezies" value={pokemonDraft.speciesQuery} requireDetails onLoadingChange={setSpeciesLoading}
+                onChange={(speciesQuery) => setPokemonDraft(current => current ? { ...current, speciesQuery, selection: undefined } : current)}
+                onSelect={(selection) => setPokemonDraft(current => current ? selectPokemonDraftSpecies(current, selection) : current)} />
+                {speciesLoading && <small className="muted" role="status">Speziesdetails werden geladen ...</small>}
+              </div>
               <label>Nickname<input value={pokemonDraft.nickname} onChange={(event) => setPokemonDraft({ ...pokemonDraft, nickname: event.target.value })} placeholder="—" /></label>
-              <label>Level<input type="number" min={1} value={pokemonDraft.level} onChange={(event) => setPokemonDraft({ ...pokemonDraft, level: Number(event.target.value) })} /></label>
+              <label>Level<input type="number" min={1} max={100} value={pokemonDraft.level} onChange={(event) => setPokemonDraft({ ...pokemonDraft, level: Number(event.target.value) })} /></label>
               <label>Ability<input value={pokemonDraft.ability} onChange={(event) => setPokemonDraft({ ...pokemonDraft, ability: event.target.value })} placeholder="—" /></label>
-              <label>Status<select value={pokemonDraft.status} onChange={(event) => { setPokemonDraft({ ...pokemonDraft, status: event.target.value as PokemonStatus }); setPokemonDialogError(""); setConfirmingDeath(false); }}>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-              {run.randomizer.types ? <label className="dialogFullWidth">Typen (kommagetrennt)<input value={pokemonDraft.types} onChange={(event) => setPokemonDraft({ ...pokemonDraft, types: event.target.value })} placeholder="z. B. Drache, Boden" /></label> : <div className="dialogTypes dialogFullWidth"><span>Typen</span><div>{editingPokemon.types?.length ? editingPokemon.types.map((type) => <span className="typeChip" key={type}>{type}</span>) : "—"}</div></div>}
+              <label>Status<select value={pokemonDraft.status} onChange={(event) => { setPokemonDraft({ ...pokemonDraft, status: event.target.value as PokemonStatus, deathCausedByPlayerId: event.target.value === "dead" ? (editingPokemon.status === "dead" ? pokemonDraft.deathCausedByPlayerId : pokemonDraft.deathCausedByPlayerId || editingPokemon.playerId) : "" }); setPokemonDialogError(""); setConfirmingDeath(false); }}>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              {pokemonDraft.status === "dead" && editingPokemon.soulLinkId && <label className="dialogFullWidth deathCauseSelect">Tod verursacht durch<select value={pokemonDraft.deathCausedByPlayerId} disabled={editingPokemon.status === "dead" && !canManageRun(currentMember)} onChange={event => { setPokemonDraft({ ...pokemonDraft, deathCausedByPlayerId: event.target.value }); setPokemonDialogError(""); }}>
+                <option value="">Nicht zugeordnet</option>
+                {editingSoulLinkMembers.map(pokemon => { const owner = run.players.find(p => p.id === pokemon.playerId); return <option key={pokemon.id} value={pokemon.playerId}>{pokemonLabel(pokemon)} – {owner?.name ?? "Ehemaliger Spieler"}{owner?.active === false ? " (ehemalig)" : ""}</option>; })}
+              </select></label>}
+              {run.randomizer.types ? <label className="dialogFullWidth">Typen (kommagetrennt)<input value={pokemonDraft.types} onChange={(event) => setPokemonDraft({ ...pokemonDraft, types: event.target.value })} placeholder="z. B. Drache, Boden" /></label> : <div className="dialogTypes dialogFullWidth"><span>Typen</span><div>{pokemonDraft.types.trim() ? pokemonDraft.types.split(",").map(type => type.trim()).filter(Boolean).map((type) => <span className="typeChip" key={type}>{type}</span>) : "—"}</div></div>}
             </div>
 
             {editingSoulLinkMembers.length > 0 && (
@@ -1336,14 +1355,14 @@ function Dashboard({ run, setRun, cloudMode, currentMember, onDeleteOnline, onRe
                 <strong>{editingPokemon.soulLinkId ? `SoulLink #${getSoulLinkNumber(editingPokemon.soulLinkId) ?? "—"} als tot markieren?` : `${editingPokemon.nickname || editingPokemon.species} als tot markieren?`}</strong>
                 <p>Wenn ein Pokémon stirbt, gelten alle verbundenen Pokémon als tot. Betroffen:</p>
                 <div>{(editingSoulLinkMembers.length > 0 ? editingSoulLinkMembers : [editingPokemon]).map((member) => { const owner = run.players.find((player) => player.id === member.playerId); return <span key={member.id}>{pokemonLabel(member)} – {owner?.name ?? "—"}</span>; })}</div>
-                <p>Alle Pokémon werden in den Friedhof verschoben.</p>
+                <p>Alle Pokémon werden in den Friedhof verschoben. Tod verursacht durch: {run.players.find(p => p.id === pokemonDraft.deathCausedByPlayerId)?.name ?? "Nicht zugeordnet"}.</p>
               </div>
             )}
 
             {pokemonDialogError && <p className="dialogError">{pokemonDialogError}</p>}
             <footer className="pokemonDialogFooter">
               <button type="button" className="ghostButton" onClick={confirmingDeath ? () => setConfirmingDeath(false) : closePokemonDialog}>Abbrechen</button>
-              <button type="button" className={confirmingDeath ? "dangerConfirmButton" : "primaryButton"} onClick={savePokemonDraft}>{confirmingDeath ? (editingPokemon.soulLinkId ? "Alle als tot markieren" : "Als tot markieren") : editingPokemon.soulLinkId && pokemonDraft.status !== editingPokemon.status ? (pokemonDraft.status === "dead" ? "SoulLink als tot markieren" : `Gesamten SoulLink ${pokemonDraft.status === "team" ? "ins Team" : "in die Box"} verschieben`) : "Änderungen speichern"}</button>
+              <button type="button" className={confirmingDeath ? "dangerConfirmButton" : "primaryButton"} disabled={speciesLoading} onClick={savePokemonDraft}>{confirmingDeath ? (editingPokemon.soulLinkId ? "Alle als tot markieren" : "Als tot markieren") : editingPokemon.soulLinkId && pokemonDraft.status !== editingPokemon.status ? (pokemonDraft.status === "dead" ? "SoulLink als tot markieren" : `Gesamten SoulLink ${pokemonDraft.status === "team" ? "ins Team" : "in die Box"} verschieben`) : "Änderungen speichern"}</button>
             </footer>
           </section>
         </div>

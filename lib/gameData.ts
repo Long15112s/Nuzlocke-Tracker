@@ -23,7 +23,7 @@ export const platinumProgress: BossProgress[] = [
 
 export type EncounterLocationOption = { id: string; label: string; legacyLabels?: readonly string[] };
 export const platinumEncounterLocations: readonly EncounterLocationOption[] = [
-  { id: "starter", label: "Starter" }, { id: "route-201", label: "Route 201" },
+  { id: "starter", label: "Starter" }, { id: "fossil", label: "Fossil" }, { id: "route-201", label: "Route 201" },
   { id: "verity-lakefront", label: "See der Wahrheit – Ufer", legacyLabels: ["Verity Lakefront"] },
   ...Array.from({ length: 2 }, (_, i) => ({ id: `route-${202 + i}`, label: `Route ${202 + i}` })),
   { id: "oreburgh-gate", label: "Erzelingen-Tor", legacyLabels: ["Oreburgh Gate"] },

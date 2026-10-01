@@ -100,7 +100,9 @@ test("death undo is host-only, atomic and separate from soft delete", () => {
   const permissionsSource = readFileSync("lib/permissions.ts", "utf8");
   assert.match(permissionsSource, /canUndoSoulLinkDeath[\s\S]*canManageRun/);
   assert.match(pageSource, /if \(!canUndoSoulLinkDeath\(currentMember\) \|\| soulLinkMutationRef\.current\) return/);
-  assert.match(pageSource, /pokemon\.soulLinkId === linkId \? \{ \.\.\.pokemon, status: target\.status \}/);
-  assert.match(pageSource, /deathPreviousStatus: undefined, diedAt: undefined, diedBy: undefined/);
+  const logicSource = readFileSync("lib/runLogic.ts", "utf8");
+  assert.match(pageSource, /setRun\(applySoulLinkDeathUndo\(run, linkId, currentMember\)\)/);
+  assert.match(logicSource, /p\.soulLinkId === linkId \? \{ \.\.\.p, status: target\.status \}/);
+  assert.match(logicSource, /deathPreviousStatus: undefined, diedAt: undefined, diedBy: undefined, deathCausedByPlayerId: undefined/);
   assert.match(pageSource, /deletedAt: undefined, deletedBy: undefined/);
 });

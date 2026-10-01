@@ -13,6 +13,8 @@ type PokemonAutocompleteProps = {
   inputRef?: React.Ref<HTMLInputElement>;
   onSelectionComplete?: () => void;
   loadDetailsOnSelect?: boolean;
+  requireDetails?: boolean;
+  onLoadingChange?: (loading: boolean) => void;
 };
 
 export default function PokemonAutocomplete({
@@ -25,7 +27,11 @@ export default function PokemonAutocomplete({
   inputRef,
   onSelectionComplete,
   loadDetailsOnSelect = true,
+  requireDetails = false,
+  onLoadingChange,
 }: PokemonAutocompleteProps) {
+  const selectionRequestRef = useRef(0);
+  useEffect(() => () => { selectionRequestRef.current += 1; }, []);
   const [open, setOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [options, setOptions] = useState<PokemonApiSummary[]>([]);
@@ -99,40 +105,31 @@ export default function PokemonAutocomplete({
   }, [options, value]);
 
   const chooseOption = async (option: PokemonApiSummary) => {
+    const request = ++selectionRequestRef.current;
     const nextValue = option.displayName ?? option.name;
     onChange(nextValue);
     setOpen(false);
-
-    if (onSelect) {
-      if (!loadDetailsOnSelect) {
-        onSelect({
-          id: option.id,
-          name: option.name,
-          apiName: option.apiName ?? option.name,
-          displayName: option.displayName ?? option.name,
-          spriteUrl: option.spriteUrl,
-          types: [],
-          abilities: [],
-        });
-        onSelectionComplete?.();
-        return;
+    setError(null);
+    if (!onSelect) return;
+    if (!loadDetailsOnSelect && !requireDetails) {
+      onSelect({ id: option.id, name: option.name, apiName: option.apiName ?? option.name,
+        displayName: nextValue, spriteUrl: option.spriteUrl, types: [], abilities: [] });
+      onSelectionComplete?.(); return;
+    }
+    onLoadingChange?.(true);
+    try {
+      const details = await getPokemonDetails(option.apiName ?? option.name);
+      if (request !== selectionRequestRef.current) return;
+      if (requireDetails && (!details?.id || !details.spriteUrl || !details.types.length)) {
+        setError("Detaildaten konnten nicht geladen werden. Bitte Pokémon erneut auswählen."); return;
       }
-      const details = await getPokemonDetails(option.name);
-
-      if (details) {
-        onSelect(details);
-      } else {
-        onSelect({
-          id: option.id,
-          name: option.name,
-          apiName: option.name,
-          displayName: option.displayName ?? option.name,
-          spriteUrl: option.spriteUrl,
-          types: [],
-          abilities: [],
-        });
-      }
+      onSelect(details ?? { id: option.id, name: option.name, apiName: option.apiName ?? option.name,
+        displayName: nextValue, spriteUrl: option.spriteUrl, types: [], abilities: [] });
       onSelectionComplete?.();
+    } catch {
+      if (request === selectionRequestRef.current) setError("Detaildaten konnten nicht geladen werden. Bitte Pokémon erneut auswählen.");
+    } finally {
+      if (request === selectionRequestRef.current) onLoadingChange?.(false);
     }
   };
 
@@ -176,9 +173,12 @@ export default function PokemonAutocomplete({
     <div className="pokemonAutocomplete" ref={wrapperRef}>
       {label && <label>{label}</label>}
       <input
+        aria-label={label}
         ref={inputRef}
         value={value}
         onChange={(event) => {
+          selectionRequestRef.current += 1;
+          onLoadingChange?.(false);
           const nextValue = event.target.value;
           onChange(nextValue);
           setOpen(Boolean(nextValue.trim()) && suggestions.length > 0);

@@ -925,3 +925,46 @@ button.playerMonItem:hover { border-color: rgba(114,207,255,.3); background: rgb
 .fixedSlotList > div > span:first-child, .fixedSlotList small { color: var(--muted); font-size: 8px; }.fixedSlotList strong { font-size: 10px; }
 .playerListItem.emptySlot { border-style: dashed; color: var(--muted); cursor: default; }
 @media (max-width: 600px) { .setupSlot { grid-template-columns: 1fr; align-items: stretch; } }
+
+.encounterActions { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.encounterHistoryCard .historyRow { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.encounterActions .pokemonDialog { white-space: normal; max-height: 90vh; overflow-y: auto; }
+
+.typeChartPanel { min-width: 0; }
+.typeChartLegend { display: flex; flex-wrap: wrap; gap: 12px 20px; font-size: 12px; margin: 16px 0; }
+.typeMultiplier { display: inline-flex; align-items: center; justify-content: center; min-width: 36px; min-height: 30px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; font-weight: 700; }
+.typeMultiplier.super, .typeCalculatorResult.super { color: #86efac; background: rgba(134,239,172,.12); }
+.typeMultiplier.resisted, .typeCalculatorResult.resisted { color: #fcd34d; background: rgba(252,211,77,.12); }
+.typeMultiplier.immune, .typeCalculatorResult.immune { color: #fda4af; background: rgba(253,164,175,.12); }
+.typeMultiplier.neutral, .typeCalculatorResult.neutral { color: var(--muted); background: transparent; }
+.typeChartHover { min-height: 2.5em; font-size: 12px; color: var(--muted); }
+.typeChartScroll { max-width: 100%; max-height: 65vh; overflow: auto; border: 1px solid var(--line); border-radius: 10px; isolation: isolate; }
+.typeChartTable { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; font-size: 12px; }
+.typeChartTable th, .typeChartTable td { padding: 5px; min-width: 76px; text-align: center; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.typeChartTable th { background: #101c2b; }
+.typeChartTable thead th { position: sticky; top: 0; z-index: 2; height: 48px; }
+.typeChartTable tbody th { position: sticky; left: 0; z-index: 1; }
+.typeChartTable .typeChartCorner { position: sticky; left: 0; z-index: 3; min-width: 115px; line-height: 1.5; }
+.typeChartTable .typeAxisActive { background: #1c3045; }
+.typeChartTable td button { width: 100%; cursor: pointer; }
+.typeChartTable td button:hover, .typeChartTable td button:focus-visible { border-color: #7dd3fc; outline: 2px solid #7dd3fc; outline-offset: -2px; }
+.typeChartNote { margin-top: 16px; }
+.typeCalculator { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 16px; }
+.typeCalculatorFields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.typeCalculatorResult { display: inline-block; margin-top: 16px; padding: 10px 16px; border-radius: 8px; font-weight: 700; }
+@media (max-width: 640px) { .typeCalculatorFields { grid-template-columns: 1fr; } }
+.typeChartTable .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+
+.deathCounterList { list-style-position: inside; margin: 12px 0; padding: 0; }
+.deathCounterList li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.deathCounterList li > span { overflow-wrap: anywhere; }
+.deathCounterList strong { white-space: nowrap; }
+.deathCounterUnassigned, .deathCounterTotal { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; }
+.deathCounterUnassigned { color: var(--muted); font-size: 12px; }
+.deathCounterTotal { border-top: 1px solid var(--line); font-weight: 700; }
+.deathCause { display: grid; gap: 6px; padding: 10px 0; color: var(--muted); }
+.deathCauseEditor { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.deathPokemonChoices { display: grid; gap: 10px; margin-top: 16px; }
+.deathPokemonChoices button { display: flex; align-items: center; gap: 12px; text-align: left; white-space: normal; }
+.deathCauseSelect { min-width: 0; }
+.deathCauseSelect select { width: 100%; min-width: 0; max-width: 100%; text-overflow: ellipsis; }
